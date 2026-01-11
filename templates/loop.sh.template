@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Ralph Wiggum Loop - Autonomous Agent Runner
+# Copy to <project>/.ralph/loop.sh
+
+set -euo pipefail
+
+# Load config
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/config.env"
+
+# Defaults
+MAX_ITERATIONS="${MAX_ITERATIONS:-30}"
+AGENT="${AGENT:-claude}"
+CURRENT_SPRINT="${CURRENT_SPRINT:-}"
+SPRINT_DIR="$SCRIPT_DIR/sprints/$CURRENT_SPRINT"
+PROMPT_FILE="$SPRINT_DIR/prompt.md"
+CHUNKS_FILE="$SPRINT_DIR/chunks.json"
+
+# Validate sprint exists
+if [[ -z "$CURRENT_SPRINT" ]] || [[ ! -d "$SPRINT_DIR" ]]; then
+  echo "Error: CURRENT_SPRINT not set or sprint folder not found"
+  echo "Set CURRENT_SPRINT in config.env (e.g., CURRENT_SPRINT=1-scaffold-foundation)"
+  exit 1
+fi
+
+# Create timestamped log directory for this run
+RUN_ID=$(date +%Y%m%d-%H%M%S)
+LOG_DIR="$SCRIPT_DIR/logs/$CURRENT_SPRINT/run-$RUN_ID"
+mkdir -p "$LOG_DIR"
+
+# Check if all chunks pass
+all_chunks_pass() {
+  ! grep -q '"passes": false' "$CHUNKS_FILE"
+}
+
+# Agent command builders
+# Claude: stream-json for real-time tool call visibility
+run_claude() {
+  claude --dangerously-skip-permissions -p "$(cat "$PROMPT_FILE")" \
+    --output-format=stream-json --include-partial-messages --verbose 2>&1 \
+    | tee "$LOG_FILE" \
+    | python3 "$SCRIPT_DIR/format-stream.py"
+}
+
+# Other agents: use script for PTY emulation
+run_codex() {
+  script -q -c "codex --auto-approve --prompt-file \"$PROMPT_FILE\"" /dev/null 2>&1 | tee "$LOG_FILE"
+}
+
+run_amp() {
+  script -q -c "amp run --autonomous --prompt-file \"$PROMPT_FILE\"" /dev/null 2>&1 | tee "$LOG_FILE"
+}
+
+run_opencode() {
+  script -q -c "opencode --auto --prompt \"$PROMPT_FILE\"" /dev/null 2>&1 | tee "$LOG_FILE"
+}
+
+run_droid() {
+  script -q -c "droid exec --auto high -f \"$PROMPT_FILE\"" /dev/null 2>&1 | tee "$LOG_FILE"
+}
+
+# Main loop
+echo "Starting Ralph loop: agent=$AGENT, max=$MAX_ITERATIONS"
+echo "Sprint: $CURRENT_SPRINT"
+echo "Logs: $LOG_DIR"
+echo "---"
+
+for i in $(seq 1 "$MAX_ITERATIONS"); do
+  echo "[Iteration $i/$MAX_ITERATIONS]"
+
+  LOG_FILE="$LOG_DIR/iteration-$i.log"
+
+  case "$AGENT" in
+    claude)   run_claude ;;
+    codex)    run_codex ;;
+    amp)      run_amp ;;
+    opencode) run_opencode ;;
+    droid)    run_droid ;;
+    *) echo "Unknown agent: $AGENT"; exit 1 ;;
+  esac
+
+  # Check for chunk completion
+  if grep -q "RALPH_COMPLETE" "$LOG_FILE"; then
+    echo "Chunk completed in iteration $i"
+
+    # Check if ALL chunks now pass
+    if all_chunks_pass; then
+      echo "All chunks complete! Sprint finished in $i iterations."
+      exit 0
+    fi
+
+    # Backup commit (no-op if agent already committed)
+    if git rev-parse --git-dir > /dev/null 2>&1; then
+      git add -A
+      git commit -m "ralph: chunk completed (iteration $i)" -q 2>/dev/null || true
+    fi
+
+    echo "More chunks remain, continuing..."
+    sleep 2
+    continue
+  fi
+
+  # Check for blocked
+  if grep -q "<blocked>" "$LOG_FILE"; then
+    REASON=$(grep -oP '(?<=<blocked>).*(?=</blocked>)' "$LOG_FILE" || echo "unknown")
+    echo "Agent blocked: $REASON"
+    exit 1
+  fi
+
+  # Backup commit for incomplete iterations (no-op if agent already committed)
+  if git rev-parse --git-dir > /dev/null 2>&1; then
+    git add -A
+    git commit -m "ralph: iteration $i" --allow-empty -q 2>/dev/null || true
+  fi
+
+  echo "Iteration $i complete, continuing..."
+  sleep 2
+done
+
+echo "Max iterations ($MAX_ITERATIONS) reached without completion"
+exit 2

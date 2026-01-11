@@ -1,0 +1,19 @@
+# Project repos (cloned here for autonomous coding, tracked in their own repos)
+# Exclude all directories except docs/ and templates/
+blackbird/
+*/
+!docs/
+!templates/
+
+# Examples and notes
+examples-at-SPEC-stage/
+notes/
+
+# Logs and env
+*.log
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
