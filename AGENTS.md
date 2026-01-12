@@ -52,6 +52,25 @@ SPEC ──▶ PLAN ──▶ CHUNK ──▶ RUN
 
 Set `CURRENT_SPRINT=1-sprint-name` in config.env to select active sprint.
 
+## Post-Sprint Hooks
+
+After all chunks pass, the loop runs hooks for automation:
+
+```
+.ralph/
+├── hooks/
+│   ├── post-sprint.sh      # Orchestrator (runs all hooks)
+│   ├── review.sh           # Codex code review + auto-fix ALL issues
+│   ├── document.sh         # Hybrid: sprint summary + update main docs
+│   └── test.sh             # Test suite → backend/tests/sprint/
+└── prompts/
+    ├── review.md           # Code review prompt template
+    ├── document.md         # Documentation prompt template
+    └── test.md             # Test generation prompt template
+```
+
+**Manifest tracking**: Each sprint gets `manifest.json` tracking start/end commits, timestamps, and per-chunk commits for review/docs/tests.
+
 ## Key Concepts
 
 **IMPLEMENTATION_PLAN.md** - Created in planning mode before chunking:
@@ -143,7 +162,7 @@ docker compose up -d
 ## Documentation
 
 - `docs/sprint-structure.md` - How to organize sprints and chunks
-- `templates/` - Loop script and config templates
+- `templates/` - Loop script, hooks, and prompt templates
 
 ## References
 

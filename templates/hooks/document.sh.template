@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# Documentation Update Hook - Hybrid Approach
+# 1. Creates sprint summary in docs/sprints/
+# 2. Updates relevant main docs/ files
+
+set -euo pipefail
+
+SPRINT_DIR="$1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+MANIFEST="$SPRINT_DIR/manifest.json"
+
+# Validate manifest exists
+if [[ ! -f "$MANIFEST" ]]; then
+  echo "ERROR: Manifest not found: $MANIFEST"
+  exit 1
+fi
+
+SPRINT_NAME=$(jq -r '.sprint' "$MANIFEST")
+SPRINT_NUM=$(echo "$SPRINT_NAME" | grep -oE '^[0-9]+')
+DOC_LOG="$SPRINT_DIR/document.log"
+
+# Create sprint docs directory
+SPRINT_DOCS_DIR="$PROJECT_ROOT/docs/sprints"
+mkdir -p "$SPRINT_DOCS_DIR"
+SPRINT_DOC_FILE="$SPRINT_DOCS_DIR/$SPRINT_NAME.md"
+
+echo "Updating documentation for sprint: $SPRINT_NAME"
+echo "Sprint summary: $SPRINT_DOC_FILE"
+echo "Main docs: $PROJECT_ROOT/docs/"
+
+# Gather context
+CHUNKS_FILE="$SPRINT_DIR/chunks.json"
+CHUNKS_CONTENT=""
+if [[ -f "$CHUNKS_FILE" ]]; then
+  CHUNKS_CONTENT=$(cat "$CHUNKS_FILE")
+fi
+
+# Get commits from manifest
+COMMITS=$(jq -r '.commits[] | "- \(.hash[0:7]) \(.message)"' "$MANIFEST" 2>/dev/null || echo "No commits recorded")
+
+# Get artifact files from chunks
+ARTIFACTS=$(jq -r '.chunks[].artifacts[]' "$CHUNKS_FILE" 2>/dev/null | sort -u || echo "")
+
+# Read artifact files (limit to first 100 lines each)
+ARTIFACT_CONTENT=""
+for artifact in $ARTIFACTS; do
+  FULL_PATH="$PROJECT_ROOT/$artifact"
+  if [[ -f "$FULL_PATH" ]]; then
+    EXT="${artifact##*.}"
+    ARTIFACT_CONTENT+="### $artifact
+\`\`\`$EXT
+$(head -100 "$FULL_PATH")
+\`\`\`
+
+"
+  fi
+done
+
+# List existing docs for context
+EXISTING_DOCS=$(ls "$PROJECT_ROOT/docs/"*.md 2>/dev/null | xargs -I{} basename {} | tr '\n' ', ' || echo "none")
+
+# Load prompt template
+PROMPT_TEMPLATE=$(cat "$SCRIPT_DIR/prompts/document.md")
+
+# Build full prompt
+FULL_PROMPT=$(cat <<EOF
+$PROMPT_TEMPLATE
+
+## Sprint: $SPRINT_NAME (Sprint $SPRINT_NUM)
+
+## Chunks Completed:
+\`\`\`json
+$CHUNKS_CONTENT
+\`\`\`
+
+## Commits:
+$COMMITS
+
+## Key Files Created/Modified:
+$ARTIFACT_CONTENT
+
+## Existing Documentation Files:
+$EXISTING_DOCS
+
+## Output Locations:
+1. Sprint summary file: $SPRINT_DOC_FILE
+2. Main docs to update: $PROJECT_ROOT/docs/
+
+## Instructions:
+1. Create the sprint summary at $SPRINT_DOC_FILE (concise, 50-100 lines)
+2. Read and update relevant main docs in docs/
+3. Do NOT add "Generated with" or "Co-Authored-By" lines
+4. Commit with: docs: update documentation for sprint $SPRINT_NUM
+EOF
+)
+
+# Run Claude for documentation updates
+echo "Running Claude for documentation updates..."
+claude --dangerously-skip-permissions -p "$FULL_PROMPT" 2>&1 | tee "$DOC_LOG" || {
+  echo "WARNING: Claude documentation generation exited with non-zero status"
+}
+
+# Check results
+echo ""
+if [[ -f "$SPRINT_DOC_FILE" ]]; then
+  echo "Sprint summary created: $SPRINT_DOC_FILE"
+else
+  echo "WARNING: Sprint summary not created at $SPRINT_DOC_FILE"
+fi
+
+echo "Documentation update complete. See $DOC_LOG for details."

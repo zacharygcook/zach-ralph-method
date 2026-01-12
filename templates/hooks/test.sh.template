@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# Test Suite Generation Hook - Uses Claude for test creation
+# Creates comprehensive per-sprint test suites
+# Handles failure gracefully with TEST_FAILURE_REPORT.md
+
+set -euo pipefail
+
+SPRINT_DIR="$1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+MANIFEST="$SPRINT_DIR/manifest.json"
+
+# Validate manifest exists
+if [[ ! -f "$MANIFEST" ]]; then
+  echo "ERROR: Manifest not found: $MANIFEST"
+  exit 1
+fi
+
+SPRINT_NAME=$(jq -r '.sprint' "$MANIFEST")
+SPRINT_NUM=$(echo "$SPRINT_NAME" | grep -oE '^[0-9]+')
+
+# Test output location
+TEST_DIR="$PROJECT_ROOT/backend/tests/sprint"
+mkdir -p "$TEST_DIR"
+TEST_FILE="$TEST_DIR/sprint_${SPRINT_NUM}.spec.ts"
+TEST_LOG="$SPRINT_DIR/test.log"
+FAILURE_REPORT="$SPRINT_DIR/TEST_FAILURE_REPORT.md"
+
+echo "Generating test suite for sprint: $SPRINT_NAME"
+echo "Output: $TEST_FILE"
+
+# Gather context
+CHUNKS_FILE="$SPRINT_DIR/chunks.json"
+CHUNKS_CONTENT=""
+if [[ -f "$CHUNKS_FILE" ]]; then
+  CHUNKS_CONTENT=$(cat "$CHUNKS_FILE")
+fi
+
+# Get artifact files from chunks
+ARTIFACTS=$(jq -r '.chunks[].artifacts[]' "$CHUNKS_FILE" 2>/dev/null | sort -u || echo "")
+
+# Get acceptance criteria
+ACCEPTANCE=$(jq -r '.chunks[] | "## Chunk \(.id): \(.title)\n\(.acceptance_criteria | map("- " + .) | join("\n"))"' "$CHUNKS_FILE" 2>/dev/null || echo "")
+
+# Read artifact files for context
+ARTIFACT_CONTENT=""
+for artifact in $ARTIFACTS; do
+  FULL_PATH="$PROJECT_ROOT/$artifact"
+  if [[ -f "$FULL_PATH" ]]; then
+    EXT="${artifact##*.}"
+    ARTIFACT_CONTENT+="### $artifact
+\`\`\`$EXT
+$(head -150 "$FULL_PATH")
+\`\`\`
+
+"
+  fi
+done
+
+# Find existing test patterns
+EXISTING_TESTS=""
+EXISTING_TEST_FILES=$(find "$PROJECT_ROOT/backend/tests" -name "*.spec.ts" 2>/dev/null | head -3)
+for test_file in $EXISTING_TEST_FILES; do
+  if [[ -f "$test_file" ]]; then
+    EXISTING_TESTS+="### $(basename "$test_file")
+\`\`\`typescript
+$(head -50 "$test_file")
+\`\`\`
+
+"
+  fi
+done
+
+# Load prompt template
+PROMPT_TEMPLATE=$(cat "$SCRIPT_DIR/prompts/test.md")
+
+# Build full prompt
+FULL_PROMPT=$(cat <<EOF
+$PROMPT_TEMPLATE
+
+## Sprint: $SPRINT_NAME
+
+## Chunks & Acceptance Criteria:
+$ACCEPTANCE
+
+## Chunks JSON:
+\`\`\`json
+$CHUNKS_CONTENT
+\`\`\`
+
+## Files to Test:
+$ARTIFACT_CONTENT
+
+## Existing Test Patterns in This Project:
+$EXISTING_TESTS
+
+## Output Instructions:
+1. Create test file: $TEST_FILE
+2. Add script to backend/package.json: "test:sprint-$SPRINT_NUM": "node ace test --files tests/sprint/sprint_${SPRINT_NUM}.spec.ts"
+3. Run the tests to verify they pass: cd backend && yarn test:sprint-$SPRINT_NUM
+4. If tests fail, debug and fix (up to 3 attempts)
+5. If tests STILL fail after 3 attempts: create $FAILURE_REPORT with details
+6. Do NOT commit failing tests
+7. Do NOT add "Generated with" or "Co-Authored-By" lines
+8. If tests pass: commit with message "test(sprint-$SPRINT_NUM): add sprint verification tests"
+EOF
+)
+
+# Run Claude for test generation
+echo "Running Claude for test suite generation..."
+claude --dangerously-skip-permissions -p "$FULL_PROMPT" 2>&1 | tee "$TEST_LOG" || {
+  echo "WARNING: Claude test generation exited with non-zero status"
+}
+
+# Check outcomes
+echo ""
+echo "=========================================="
+
+# Check for failure report first (agent couldn't get tests passing)
+if [[ -f "$FAILURE_REPORT" ]]; then
+  echo "TEST GENERATION INCOMPLETE"
+  echo "=========================================="
+  echo ""
+  echo "Agent could not get all tests passing."
+  echo "Failure report created: $FAILURE_REPORT"
+  echo ""
+  echo "Summary:"
+  head -20 "$FAILURE_REPORT"
+  echo ""
+  echo "Please review the failure report and investigate manually."
+  exit 3  # Special exit code for "needs human attention"
+fi
+
+# Check if test file was created
+if [[ ! -f "$TEST_FILE" ]]; then
+  echo "TEST GENERATION FAILED"
+  echo "=========================================="
+  echo "Test file was not created at: $TEST_FILE"
+  echo "Check log for details: $TEST_LOG"
+  exit 1
+fi
+
+# Verify tests actually pass by running them
+echo "VERIFYING TESTS..."
+echo "=========================================="
+cd "$PROJECT_ROOT/backend"
+
+if yarn test:sprint-$SPRINT_NUM 2>&1; then
+  echo ""
+  echo "=========================================="
+  echo "TEST SUITE COMPLETE"
+  echo "=========================================="
+  echo "All tests passing: $TEST_FILE"
+  exit 0
+else
+  echo ""
+  echo "=========================================="
+  echo "WARNING: TESTS NOT PASSING"
+  echo "=========================================="
+  echo "Test file exists but tests are failing."
+  echo "This shouldn't happen - agent should have created failure report."
+  echo "Check: $TEST_LOG"
+  exit 2  # Tests exist but failing
+fi
