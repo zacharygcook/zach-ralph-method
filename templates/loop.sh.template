@@ -99,12 +99,13 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
   SUMMARY_LOG="$LOG_DIR/iteration-$i.summary.log"
   export SUMMARY_LOG
 
+  # Run agent (allow non-zero exit - we check log for completion signals)
   case "$AGENT" in
-    claude)   run_claude ;;
-    codex)    run_codex ;;
-    amp)      run_amp ;;
-    opencode) run_opencode ;;
-    droid)    run_droid ;;
+    claude)   run_claude || true ;;
+    codex)    run_codex || true ;;
+    amp)      run_amp || true ;;
+    opencode) run_opencode || true ;;
+    droid)    run_droid || true ;;
     *) echo "Unknown agent: $AGENT"; exit 1 ;;
   esac
 
