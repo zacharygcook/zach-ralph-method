@@ -33,6 +33,13 @@ all_chunks_pass() {
   ! grep -q '"passes": false' "$CHUNKS_FILE"
 }
 
+# Get next sprint name (increment number prefix)
+get_next_sprint() {
+  local current_num=$(echo "$CURRENT_SPRINT" | grep -oE '^[0-9]+')
+  local next_num=$((current_num + 1))
+  ls "$SCRIPT_DIR/sprints/" 2>/dev/null | grep "^${next_num}-" | head -1
+}
+
 # Agent command builders
 # Claude: stream-json for real-time tool call visibility
 run_claude() {
@@ -44,19 +51,19 @@ run_claude() {
 
 # Other agents: use script for PTY emulation
 run_codex() {
-  script -q -c "codex --auto-approve --prompt-file \"$PROMPT_FILE\"" /dev/null 2>&1 | tee "$LOG_FILE"
+  codex --auto-approve --prompt-file "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
 }
 
 run_amp() {
-  script -q -c "amp run --autonomous --prompt-file \"$PROMPT_FILE\"" /dev/null 2>&1 | tee "$LOG_FILE"
+  amp run --autonomous --prompt-file "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
 }
 
 run_opencode() {
-  script -q -c "opencode --auto --prompt \"$PROMPT_FILE\"" /dev/null 2>&1 | tee "$LOG_FILE"
+  opencode --auto --prompt "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
 }
 
 run_droid() {
-  script -q -c "droid exec --auto high -f \"$PROMPT_FILE\"" /dev/null 2>&1 | tee "$LOG_FILE"
+  droid exec --auto high -f "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
 }
 
 # Main loop
@@ -69,6 +76,8 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
   echo "[Iteration $i/$MAX_ITERATIONS]"
 
   LOG_FILE="$LOG_DIR/iteration-$i.log"
+  SUMMARY_LOG="$LOG_DIR/iteration-$i.summary.log"
+  export SUMMARY_LOG
 
   case "$AGENT" in
     claude)   run_claude ;;
@@ -81,13 +90,10 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
 
   # Check for chunk completion
   if grep -q "RALPH_COMPLETE" "$LOG_FILE"; then
+    echo ""
+    echo "=========================================="
     echo "Chunk completed in iteration $i"
-
-    # Check if ALL chunks now pass
-    if all_chunks_pass; then
-      echo "All chunks complete! Sprint finished in $i iterations."
-      exit 0
-    fi
+    echo "=========================================="
 
     # Backup commit (no-op if agent already committed)
     if git rev-parse --git-dir > /dev/null 2>&1; then
@@ -95,7 +101,31 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
       git commit -m "ralph: chunk completed (iteration $i)" -q 2>/dev/null || true
     fi
 
-    echo "More chunks remain, continuing..."
+    # Check if ALL chunks now pass
+    if all_chunks_pass; then
+      echo "All chunks complete! Sprint finished."
+      echo ""
+
+      # Check for next sprint
+      NEXT_SPRINT=$(get_next_sprint)
+      if [[ -n "$NEXT_SPRINT" ]]; then
+        echo "Next sprint available: $NEXT_SPRINT"
+        read -p "Start next sprint? [y/N] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+          sed -i "s/^CURRENT_SPRINT=.*/CURRENT_SPRINT=$NEXT_SPRINT/" "$SCRIPT_DIR/config.env"
+          echo "Updated CURRENT_SPRINT to $NEXT_SPRINT"
+          echo "Run ./loop.sh again to start."
+        fi
+      else
+        echo "No next sprint found. Create one with /ralph-sprint"
+      fi
+
+      exit 0  # Sprint complete - exit
+    fi
+
+    # More chunks remain - continue to next iteration (fresh context window)
+    echo "Chunk done. Continuing to next chunk with fresh context..."
     sleep 2
     continue
   fi

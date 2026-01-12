@@ -120,23 +120,25 @@ Uses `tee` for **real-time streaming** and **auto-continues** through all chunks
 │                             │                          │
 │              ┌──────────────┼──────────────┐           │
 │              ▼              ▼              ▼           │
-│           [yes]         [blocked]      [no/timeout]    │
+│           [yes]         [blocked]       [no]           │
 │              │              │              │           │
 │              ▼              ▼              ▼           │
-│    ┌─────────────┐    Human needed    Retry/Review     │
-│    │All chunks   │                                     │
-│    │pass: true?  │                                     │
-│    └──────┬──────┘                                     │
-│      yes/ \no                                          │
-│        /   \                                           │
-│       ▼     ▼                                          │
-│   SPRINT   Continue                                    │
-│   DONE!    to next                                     │
-│            chunk                                       │
+│    ┌─────────────┐     EXIT (1)    Next iteration      │
+│    │All chunks   │    Human help   (fresh context)     │
+│    │pass: true?  │     needed            │             │
+│    └──────┬──────┘                       │             │
+│      yes/ \no                            │             │
+│        /   \                             │             │
+│       ▼     ▼◄───────────────────────────┘             │
+│   EXIT (0)  Continue to                                │
+│   Sprint    next chunk                                 │
+│   done!     (fresh ctx)                                │
+│                                                         │
+│   (Also exits with code 2 if max iterations reached)   │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Key behavior**: Agent completes chunk → commits with descriptive message → sets `passes: true` → outputs RALPH_COMPLETE. Loop only exits when ALL chunks pass or agent is blocked.
+**Key behavior**: Agent completes chunk → commits with descriptive message → sets `passes: true` → outputs RALPH_COMPLETE. Loop continues to next chunk (fresh context) until: all chunks pass, agent blocked, or max iterations reached.
 
 **Git commit sequence**:
 1. Complete acceptance criteria
@@ -150,8 +152,11 @@ Uses `tee` for **real-time streaming** and **auto-continues** through all chunks
 <project>/.ralph/
 ├── config.env                      # Agent, max iterations, CURRENT_SPRINT
 ├── loop.sh                         # Bash loop script
+├── format-stream.py                # Output formatter (Claude)
 ├── logs/
 │   └── <sprint>/run-<timestamp>/   # Logs organized by sprint and run
+│       ├── iteration-N.log         # Full JSON log
+│       └── iteration-N.summary.log # Human-readable summary
 └── sprints/
     ├── 1-scaffold-foundation/      # First sprint
     │   ├── prompt.md
@@ -195,9 +200,9 @@ claude --dangerously-skip-permissions -p "$(cat "$PROMPT_FILE")" \
 - Tool results (success/error)
 - Final result with cost and duration
 
-The log file (`$LOG_FILE`) gets raw JSON, terminal shows formatted output. Grep for `RALPH_COMPLETE` still works in the JSON.
+The log file (`$LOG_FILE`) gets raw JSON, terminal shows formatted output. A separate summary log (`iteration-N.summary.log`) captures human-readable output. Grep for `RALPH_COMPLETE` still works in the JSON.
 
-**Formatter** (`format-stream.py`):
+**Formatter** (`format-stream.py`) - simplified example, see `templates/format-stream.py` for full version with summary logging:
 ```python
 #!/usr/bin/env python3
 import json, sys

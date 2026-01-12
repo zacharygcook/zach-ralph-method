@@ -39,6 +39,8 @@ SPEC ──▶ PLAN ──▶ CHUNK ──▶ RUN
 ├── format-stream.py            # Output formatter (Claude)
 ├── logs/
 │   └── <sprint>/run-<timestamp>/   # Logs per sprint per run
+│       ├── iteration-N.log         # Full JSON log
+│       └── iteration-N.summary.log # Human-readable summary
 └── sprints/
     └── 1-sprint-name/          # Each sprint gets numbered folder
         ├── prompt.md           # Sprint-specific prompt
@@ -68,10 +70,10 @@ See `docs/sprint-structure.md` for ASCII diagrams and full details.
 2. Create `chunks.json` based on plan
 3. Run `./.ralph/loop.sh`
 4. Agent completes chunk → commits → sets `passes: true` → outputs RALPH_COMPLETE
-5. Loop auto-continues to next chunk
-6. Exits when ALL chunks pass or agent is blocked
+5. Loop auto-continues to next chunk (fresh context window per iteration)
+6. Loop exits when: all chunks pass, agent blocked, or max iterations reached
 
-**Auto-continue**: No manual intervention between chunks. Agent updates chunks.json itself.
+**Auto-continue**: No manual intervention between chunks. Each chunk gets fresh context. Agent updates chunks.json itself.
 
 ## Git Commits
 

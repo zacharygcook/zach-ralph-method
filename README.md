@@ -43,19 +43,19 @@ A bash loop that wraps an AI coding agent, re-prompting until the task is comple
 ## Why It Works
 
 ```
-Iteration 1: Agent reads codebase, implements feature A, commits, exits
-Iteration 2: Agent reads codebase (now includes A), implements B, commits, exits
-Iteration 3: Agent reads codebase (now includes A+B), implements C, commits, exits
+Iteration 1: Agent reads codebase, implements chunk 1, commits, outputs RALPH_COMPLETE
+Iteration 2: Agent reads codebase (fresh context), implements chunk 2, commits, outputs RALPH_COMPLETE
+Iteration 3: Agent reads codebase (fresh context), implements chunk 3, commits, outputs RALPH_COMPLETE
 ...
-Iteration N: All chunks complete → RALPH_COMPLETE → loop exits
+Iteration N: All chunks pass → loop exits → prompts for next sprint
 ```
 
 Each iteration:
-- Starts with a clean context window
+- Starts with a clean context window (fresh agent process)
 - Reads the current state from files (not memory)
-- Makes progress on the next chunk
-- Commits and marks completion
-- Exits, triggering the next iteration
+- Makes progress on the next incomplete chunk
+- Commits, marks chunk as passed, outputs RALPH_COMPLETE
+- Loop continues to next iteration automatically
 
 ## Quick Start
 
@@ -116,7 +116,10 @@ When a chunk is complete, the agent outputs:
 <promise>RALPH_COMPLETE</promise>
 ```
 
-The loop script greps for this marker. If found, it moves to the next chunk. If not, it re-prompts with the same chunk until success or max iterations.
+The loop greps for this marker and continues to the next chunk (fresh context window). The loop only exits when:
+- **All chunks pass** - Sprint complete, prompts for next sprint
+- **Agent blocked** - Outputs `<blocked>reason</blocked>`, needs human input
+- **Max iterations** - Safety limit reached without completion
 
 ## Credits & References
 
