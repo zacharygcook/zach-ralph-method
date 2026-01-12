@@ -109,13 +109,19 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
       # Check for next sprint
       NEXT_SPRINT=$(get_next_sprint)
       if [[ -n "$NEXT_SPRINT" ]]; then
+        echo ""
         echo "Next sprint available: $NEXT_SPRINT"
-        read -p "Start next sprint? [y/N] " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-          sed -i "s/^CURRENT_SPRINT=.*/CURRENT_SPRINT=$NEXT_SPRINT/" "$SCRIPT_DIR/config.env"
-          echo "Updated CURRENT_SPRINT to $NEXT_SPRINT"
-          echo "Run ./loop.sh again to start."
+        echo "To start: Update CURRENT_SPRINT=$NEXT_SPRINT in config.env and run ./loop.sh"
+        echo ""
+        # Only prompt if running interactively
+        if [[ -t 0 ]]; then
+          read -p "Auto-update config and continue? [y/N] " -n 1 -r
+          echo
+          if [[ $REPLY =~ ^[Yy]$ ]]; then
+            sed -i "s/^CURRENT_SPRINT=.*/CURRENT_SPRINT=$NEXT_SPRINT/" "$SCRIPT_DIR/config.env"
+            echo "Updated CURRENT_SPRINT to $NEXT_SPRINT"
+            echo "Run ./loop.sh again to start."
+          fi
         fi
       else
         echo "No next sprint found. Create one with /ralph-sprint"
