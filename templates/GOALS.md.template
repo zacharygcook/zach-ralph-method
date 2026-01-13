@@ -1,0 +1,72 @@
+# Sprint Goals
+
+This sprint addresses multiple related goals.
+
+---
+
+## 1. [First Goal Title]
+
+**Type**: bugfix | feature | refactor
+**Repos**: api | frontend | both
+**Priority**: high | medium | low
+
+### Problem
+[What's wrong or missing]
+
+### Success Criteria
+- [ ] [Criterion 1]
+- [ ] [Criterion 2]
+
+### Files Affected
+- `path/to/file.ts`
+
+---
+
+## 2. [Second Goal Title]
+
+**Type**: bugfix | feature | refactor
+**Repos**: api | frontend | both
+**Priority**: high | medium | low
+
+### Problem
+[What's wrong or missing]
+
+### Success Criteria
+- [ ] [Criterion 1]
+- [ ] [Criterion 2]
+
+### Files Affected
+- `path/to/file.ts`
+
+---
+
+## 3. [Third Goal Title]
+
+**Type**: bugfix | feature | refactor
+**Repos**: api | frontend | both
+**Priority**: high | medium | low
+
+### Problem
+[What's wrong or missing]
+
+### Success Criteria
+- [ ] [Criterion 1]
+- [ ] [Criterion 2]
+
+### Files Affected
+- `path/to/file.ts`
+
+---
+
+## Dependencies
+
+<!-- Note any dependencies between goals -->
+- Goal 2 depends on Goal 1 completing first
+- Goals 1 and 3 can be done in parallel
+
+## Global Constraints
+
+<!-- Constraints that apply to all goals -->
+- Maintain backward compatibility
+- No breaking changes to public APIs
+- All existing tests must pass

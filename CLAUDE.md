@@ -14,21 +14,41 @@ The Ralph method wraps an agent CLI in a bash loop that:
 
 Ask the user for:
 1. **Target project path** - absolute path to the repo to configure
-2. **Agent harness** - which CLI to use (claude, codex, amp, opencode, droid)
-3. **Task description** - what the autonomous session should accomplish
-4. **Max iterations** - safety limit (recommend 20-50 for most tasks)
+2. **Mode** - monorepo (single repo) or multi-repo (API + frontend)
+3. **Agent harness** - which CLI to use (claude, codex, amp, opencode, droid)
+4. **Task description** - what the autonomous session should accomplish
+5. **Max iterations** - safety limit (recommend 20-50 for most tasks)
+
+## Template Modes
+
+| Mode | Use Case | Templates |
+|------|----------|-----------|
+| **monorepo** | Single git repo | `templates/monorepo/` |
+| **multi-repo** | API + Frontend (separate repos) | `templates/multi-repo/` |
+
+Shared formatters live in `templates/shared/`.
 
 ## The Flow
 
 ```
-SPEC ──▶ PLAN ──▶ CHUNK ──▶ RUN
-(you)   (agent+you) (agent)  (loop)
+SPEC/GOAL ──▶ PLAN ──▶ CHUNK ──▶ RUN
+  (you)    (agent+you) (agent)  (loop)
 ```
 
-1. **SPEC** - Your detailed specification (already exists)
+1. **SPEC/GOAL** - Your specification or goal definition
 2. **PLAN** - Deep planning mode → `IMPLEMENTATION_PLAN.md` (60-70 lines)
 3. **CHUNK** - Break into `chunks.json` based on plan
 4. **RUN** - Execute loop, mark chunks as passed, repeat
+
+### Input Types
+
+| File | Use Case |
+|------|----------|
+| `SPEC.md` | Full MVP specification (greenfield) |
+| `GOAL.md` | Single goal (bugfix, feature, refactor) |
+| `GOALS.md` | Multiple related goals in one sprint |
+
+See `templates/GOAL.md.template` and `templates/GOALS.md.template` for formats.
 
 ## Directory Structure
 
@@ -165,10 +185,37 @@ docker compose up -d
 - [ ] Curated context in `relevant-specs.md`
 - [ ] Tested one manual iteration
 
+## Multi-Repo Mode
+
+For projects with separate API and Frontend repos:
+
+```
+project-parent/
+├── .ralph/           # Ralph lives here (no .git)
+│   ├── config.env    # REPOS="api frontend"
+│   └── sprints/
+├── api/              # Separate git repo
+│   └── CLAUDE.md
+└── frontend/         # Separate git repo
+    └── CLAUDE.md
+```
+
+**Key differences from monorepo:**
+- Git commands must `cd` into each repo
+- Manifest tracks commits per-repo
+- Chunks have `"repo": "api|frontend|both"` field
+- Hooks aggregate across repos
+
+Use `templates/multi-repo/` for these projects.
+
 ## Documentation
 
 - `docs/sprint-structure.md` - How to organize sprints and chunks
-- `templates/` - Loop script, hooks, and prompt templates
+- `templates/monorepo/` - Single-repo templates
+- `templates/multi-repo/` - Multi-repo templates
+- `templates/shared/` - Formatters (used by both modes)
+- `templates/GOAL.md.template` - Single goal format
+- `templates/GOALS.md.template` - Multiple goals format
 
 ## References
 
