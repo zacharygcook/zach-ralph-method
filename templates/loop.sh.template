@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ralph Wiggum Loop - Autonomous Agent Runner
-# Copy to <project>/.ralph/loop.sh
+# Blackbird: Scaffold + Foundation Task
 
 set -euo pipefail
 
@@ -61,7 +61,7 @@ get_next_sprint() {
 }
 
 # Agent command builders
-# Claude: stream-json for real-time tool call visibility
+# Use stream-json for real-time visibility of tool calls + formatted output
 run_claude() {
   claude --dangerously-skip-permissions -p "$(cat "$PROMPT_FILE")" \
     --output-format=stream-json --include-partial-messages --verbose 2>&1 \
@@ -69,21 +69,20 @@ run_claude() {
     | python3 "$SCRIPT_DIR/format-stream.py"
 }
 
-# Other agents: use script for PTY emulation
 run_codex() {
-  codex --auto-approve --prompt-file "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
+  codex --auto-approve --prompt-file "$PROMPT_FILE" 2>&1
 }
 
 run_amp() {
-  amp run --autonomous --prompt-file "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
+  amp run --autonomous --prompt-file "$PROMPT_FILE" 2>&1
 }
 
 run_opencode() {
-  opencode --auto --prompt "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
+  opencode --auto --prompt "$PROMPT_FILE" 2>&1
 }
 
 run_droid() {
-  droid exec --auto high -f "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
+  droid exec --auto high -f "$PROMPT_FILE" 2>&1
 }
 
 # Main loop
@@ -91,6 +90,47 @@ echo "Starting Ralph loop: agent=$AGENT, max=$MAX_ITERATIONS"
 echo "Sprint: $CURRENT_SPRINT"
 echo "Logs: $LOG_DIR"
 echo "---"
+
+# Pre-check: if all chunks already pass, skip agent and go straight to hooks
+if all_chunks_pass; then
+  echo "All chunks already complete! Skipping to post-sprint hooks..."
+  echo ""
+
+  # Finalize manifest if not already done
+  END_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+  END_TIME=$(date -Iseconds)
+  jq --arg end "$END_COMMIT" --arg time "$END_TIME" \
+    '.end_commit = $end | .completed_at = $time' \
+    "$MANIFEST_FILE" > "$MANIFEST_FILE.tmp" && mv "$MANIFEST_FILE.tmp" "$MANIFEST_FILE"
+
+  # Run post-sprint hooks (blocking)
+  if [[ -x "$SCRIPT_DIR/hooks/post-sprint.sh" ]]; then
+    echo "Running post-sprint hooks..."
+    "$SCRIPT_DIR/hooks/post-sprint.sh" "$SPRINT_DIR"
+  fi
+
+  # Check for next sprint
+  NEXT_SPRINT=$(get_next_sprint)
+  if [[ -n "$NEXT_SPRINT" ]]; then
+    echo ""
+    echo "Next sprint available: $NEXT_SPRINT"
+    echo "To start: Update CURRENT_SPRINT=$NEXT_SPRINT in config.env and run ./loop.sh"
+    echo ""
+    if [[ -t 0 ]]; then
+      read -p "Auto-update config and continue? [y/N] " -n 1 -r
+      echo
+      if [[ $REPLY =~ ^[Yy]$ ]]; then
+        sed -i "s/^CURRENT_SPRINT=.*/CURRENT_SPRINT=$NEXT_SPRINT/" "$SCRIPT_DIR/config.env"
+        echo "Updated CURRENT_SPRINT to $NEXT_SPRINT"
+        echo "Run ./loop.sh again to start."
+      fi
+    fi
+  else
+    echo "No next sprint found. Create one with /ralph-sprint"
+  fi
+
+  exit 0
+fi
 
 for i in $(seq 1 "$MAX_ITERATIONS"); do
   echo "[Iteration $i/$MAX_ITERATIONS]"
@@ -102,10 +142,10 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
   # Run agent (allow non-zero exit - we check log for completion signals)
   case "$AGENT" in
     claude)   run_claude || true ;;
-    codex)    run_codex || true ;;
-    amp)      run_amp || true ;;
-    opencode) run_opencode || true ;;
-    droid)    run_droid || true ;;
+    codex)    run_codex | tee "$LOG_FILE" || true ;;
+    amp)      run_amp | tee "$LOG_FILE" || true ;;
+    opencode) run_opencode | tee "$LOG_FILE" || true ;;
+    droid)    run_droid | tee "$LOG_FILE" || true ;;
     *) echo "Unknown agent: $AGENT"; exit 1 ;;
   esac
 
