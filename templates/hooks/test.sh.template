@@ -97,7 +97,7 @@ $EXISTING_TESTS
 ## Output Instructions:
 1. Create test file: $TEST_FILE
 2. Add script to backend/package.json: "test:sprint-$SPRINT_NUM": "node ace test --files tests/sprint/sprint_${SPRINT_NUM}.spec.ts"
-3. Run the tests to verify they pass: cd backend && yarn test:sprint-$SPRINT_NUM
+3. Run tests with timeout to verify they pass: cd backend && timeout 60 yarn test:sprint-$SPRINT_NUM
 4. If tests fail, debug and fix (up to 3 attempts)
 5. If tests STILL fail after 3 attempts: create $FAILURE_REPORT with details
 6. Do NOT commit failing tests

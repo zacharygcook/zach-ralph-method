@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Code Review Hook - Uses Codex for autonomous code review
-# Reads sprint manifest, generates diff, fixes ALL issues found
+# Passes commit range to agent, lets it pull diff via git
 
 set -euo pipefail
 
@@ -29,13 +29,6 @@ fi
 
 echo "Reviewing commits: $START_COMMIT..$END_COMMIT"
 
-# Generate diff
-DIFF_FILE="/tmp/sprint-review-$$.diff"
-git diff "$START_COMMIT".."$END_COMMIT" > "$DIFF_FILE"
-
-DIFF_LINES=$(wc -l < "$DIFF_FILE")
-echo "Diff size: $DIFF_LINES lines"
-
 # Get chunks content
 CHUNKS_FILE="$SPRINT_DIR/chunks.json"
 CHUNKS_CONTENT=""
@@ -46,29 +39,32 @@ fi
 # Build review prompt
 REVIEW_PROMPT=$(cat "$SCRIPT_DIR/prompts/review.md")
 
-# Create the full prompt
+# Create the full prompt - NO embedded diff, agent will pull it
 FULL_PROMPT=$(cat <<EOF
 $REVIEW_PROMPT
 
 ## Sprint: $SPRINT_NAME
+
+## Commit Range to Review:
+Start: $START_COMMIT
+End: $END_COMMIT
+
+Use \`git diff $START_COMMIT..$END_COMMIT\` to see the changes.
+Use \`git log $START_COMMIT..$END_COMMIT --oneline\` to see commits.
 
 ## Chunks Completed:
 \`\`\`json
 $CHUNKS_CONTENT
 \`\`\`
 
-## Diff to Review:
-\`\`\`diff
-$(cat "$DIFF_FILE")
-\`\`\`
-
 ## Output Instructions:
-1. Write your review to: $REVIEW_FILE
-2. Fix ALL issues you find (critical, quality, and style)
-3. Document your reasoning for each fix in the review file
-4. Mark controversial fixes with: // REVIEW-FIX (CONTROVERSIAL): reason
-5. Commit fixes with message: "fix(review): apply code review fixes for sprint N"
-6. Do NOT add "Generated with" or "Co-Authored-By" lines to commits
+1. Review the diff using git commands
+2. Write your review to: $REVIEW_FILE
+3. Fix ALL issues you find (critical, quality, and style)
+4. Document your reasoning for each fix in the review file
+5. Mark controversial fixes with: // REVIEW-FIX (CONTROVERSIAL): reason
+6. Commit fixes with message: "fix(review): apply code review fixes for sprint N"
+7. Do NOT add "Generated with" or "Co-Authored-By" lines to commits
 EOF
 )
 
@@ -77,9 +73,6 @@ echo "Running Codex code review..."
 codex --full-auto "$FULL_PROMPT" 2>&1 | tee "$REVIEW_LOG" || {
   echo "WARNING: Codex review exited with non-zero status"
 }
-
-# Cleanup temp file
-rm -f "$DIFF_FILE"
 
 # Check if review was created
 if [[ -f "$REVIEW_FILE" ]]; then

@@ -97,9 +97,9 @@ Add to backend/package.json scripts:
 
 1. Create the test file
 2. Add the script to package.json
-3. Run the tests: `cd backend && yarn test:sprint-N`
+3. Run tests with timeout (prevents hangs): `cd backend && timeout 60 yarn test:sprint-N`
 4. If tests pass → commit and you're done
-5. If tests fail → debug and fix, try again (up to 3 attempts)
+5. If tests fail or timeout → debug and fix, try again (up to 3 attempts)
 6. If tests STILL fail after 3 attempts → create failure report (see below)
 
 ## Handling Test Failures
