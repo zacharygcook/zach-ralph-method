@@ -6,7 +6,7 @@ set -euo pipefail
 
 SPRINT_DIR="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MANIFEST="$SPRINT_DIR/manifest.json"
 REVIEW_FILE="$SPRINT_DIR/REVIEW.md"
 REVIEW_LOG="$SPRINT_DIR/review.log"
@@ -74,7 +74,7 @@ EOF
 
 # Run Codex review
 echo "Running Codex code review..."
-codex --full-auto --quiet "$FULL_PROMPT" 2>&1 | tee "$REVIEW_LOG" || {
+codex --full-auto "$FULL_PROMPT" 2>&1 | tee "$REVIEW_LOG" || {
   echo "WARNING: Codex review exited with non-zero status"
 }
 
