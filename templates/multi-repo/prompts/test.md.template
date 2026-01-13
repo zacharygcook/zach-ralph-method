@@ -1,0 +1,159 @@
+# Test Suite Generation
+
+Create a comprehensive test suite for a completed sprint. Tests should be sophisticated and actually verify functionality, not just check file existence.
+
+## Goals
+
+1. **Verify Acceptance Criteria** - Each acceptance criterion should have corresponding tests
+2. **Integration Tests** - Test components working together
+3. **Edge Cases** - Test error handling and boundary conditions
+4. **Regression Prevention** - Tests should catch if functionality breaks later
+
+## Test Categories
+
+### Unit Tests
+- Individual functions and methods
+- Mock external dependencies (APIs, databases where appropriate)
+- Fast execution, isolated behavior
+
+### Integration Tests
+- Database operations with real test database
+- Service interactions
+- Queue operations (if applicable)
+
+### Acceptance Tests
+- Map directly to chunks.json acceptance_criteria
+- End-to-end verification of each criterion
+- Should fail if the feature is broken
+
+## Framework: Japa (AdonisJS)
+
+Use the existing test patterns from this project:
+
+```typescript
+import { test } from '@japa/runner'
+import testUtils from '@adonisjs/core/services/test_utils'
+
+test.group('Sprint N: Feature Name', (group) => {
+  // Setup/teardown if needed
+  group.each.setup(async () => {
+    await testUtils.db().withGlobalTransaction()
+  })
+
+  test('acceptance criteria description', async ({ assert }) => {
+    // Arrange - set up test data
+    // Act - perform the action
+    // Assert - verify the result
+  })
+
+  test('handles edge case X', async ({ assert }) => {
+    // Test error handling, boundaries, etc.
+  })
+})
+```
+
+## Test Quality Requirements
+
+1. **Tests MUST actually test behavior** - not just "file exists" or "function defined"
+2. **Use real assertions** - `assert.equal()`, `assert.instanceOf()`, `assert.rejects()`
+3. **Test failure cases** - What happens with invalid input?
+4. **Test boundaries** - Empty arrays, null values, max values
+5. **Mock external services** - Don't call real APIs in tests
+
+## Output Structure
+
+Create test file at: `backend/tests/sprint/sprint_N.spec.ts`
+
+```typescript
+import { test } from '@japa/runner'
+
+test.group('Sprint N: [Sprint Title]', () => {
+  // Group tests by chunk
+
+  test.group('Chunk 1: [Chunk Title]', () => {
+    test('[Acceptance Criterion 1]', async ({ assert }) => {
+      // Actual test implementation
+    })
+
+    test('[Acceptance Criterion 2]', async ({ assert }) => {
+      // Actual test implementation
+    })
+  })
+
+  test.group('Chunk 2: [Chunk Title]', () => {
+    // Repeat for each chunk
+  })
+})
+```
+
+## Package.json Script
+
+Add to backend/package.json scripts:
+```json
+"test:sprint-N": "node ace test --files tests/sprint/sprint_N.spec.ts"
+```
+
+## Workflow
+
+1. Create the test file
+2. Add the script to package.json
+3. Run tests with timeout (prevents hangs): `cd backend && timeout 60 yarn test:sprint-N`
+4. If tests pass → commit and you're done
+5. If tests fail or timeout → debug and fix, try again (up to 3 attempts)
+6. If tests STILL fail after 3 attempts → create failure report (see below)
+
+## Handling Test Failures
+
+If you cannot get all tests to pass after reasonable effort (3 attempts):
+
+**DO NOT commit failing tests.** Instead:
+
+1. Create `TEST_FAILURE_REPORT.md` in the sprint directory
+2. Document what's failing and why
+3. Exit gracefully - the human will investigate
+
+### TEST_FAILURE_REPORT.md Format
+
+```markdown
+# Test Failure Report: Sprint [N]
+
+## Summary
+[1-2 sentences: what happened, how many tests failing]
+
+## Failing Tests
+
+### Test: [test name]
+**File:** `backend/tests/sprint/sprint_N.spec.ts:XX`
+**Error:**
+\`\`\`
+[exact error message]
+\`\`\`
+**Analysis:** [Why you think it's failing]
+**Attempted Fixes:**
+1. [What you tried]
+2. [What you tried]
+**Recommendation:** [What a human should investigate]
+
+### Test: [another failing test]
+...
+
+## Passing Tests
+[List tests that ARE passing, so human knows what works]
+
+## Root Cause Hypothesis
+[Your best guess at why tests won't pass - missing setup? Bug in implementation? Test environment issue?]
+
+## Recommended Next Steps
+1. [Specific action for human to take]
+2. [Specific action for human to take]
+```
+
+## Important Rules
+
+1. Try to make tests pass - debug, fix, iterate
+2. Use existing test utilities, factories, and fixtures if available
+3. Clean up test data - use transactions that rollback
+4. Never call external APIs - mock everything external
+5. If tests pass: commit with `test(sprint-N): add sprint verification tests`
+6. If tests fail after 3 attempts: create TEST_FAILURE_REPORT.md, DO NOT commit test file
+7. Do NOT add "Generated with" or "Co-Authored-By" lines

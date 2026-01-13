@@ -1,0 +1,62 @@
+# [PROJECT_NAME]
+
+Multi-repo project with coordinated API and Frontend.
+
+## Structure
+
+```
+.
+├── .ralph/           # Autonomous coding orchestration
+├── api/              # Backend API (separate git repo)
+├── frontend/         # Frontend app (separate git repo)
+└── CLAUDE.md         # This file
+```
+
+## Repos
+
+| Repo | Description | Docs |
+|------|-------------|------|
+| `api/` | [Backend description] | `api/CLAUDE.md` |
+| `frontend/` | [Frontend description] | `frontend/CLAUDE.md` |
+
+## Quick Start
+
+```bash
+# Start all services
+cd api && docker compose up -d
+cd ../frontend && docker compose up -d
+
+# Or if there's a root-level script:
+# ./start-all.sh
+```
+
+## Git Operations
+
+**This directory has NO .git** - it's just an orchestration parent.
+
+Each repo has its own git:
+```bash
+# API commits
+cd api && git add -A && git commit -m "message"
+
+# Frontend commits
+cd frontend && git add -A && git commit -m "message"
+```
+
+## Ralph Method
+
+This project uses Ralph for autonomous coding:
+
+```bash
+# Run the loop
+./.ralph/loop.sh
+
+# Current sprint
+cat .ralph/config.env | grep CURRENT_SPRINT
+```
+
+See `.ralph/CLAUDE.md` or `.ralph/sprints/*/README.md` for sprint details.
+
+## Coordination Notes
+
+[Add notes about how the repos interact, shared types, API contracts, etc.]

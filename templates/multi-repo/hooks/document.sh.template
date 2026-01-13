@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Documentation Update Hook (Multi-Repo) - Hybrid Approach
+# 1. Creates sprint summary in .ralph/sprints/
+# 2. Updates CLAUDE.md in each modified repo
+
+set -euo pipefail
+
+SPRINT_DIR="$1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+MANIFEST="$SPRINT_DIR/manifest.json"
+
+# Load config for REPOS
+source "$SCRIPT_DIR/config.env"
+REPOS="${REPOS:-api frontend}"
+
+# Validate manifest exists
+if [[ ! -f "$MANIFEST" ]]; then
+  echo "ERROR: Manifest not found: $MANIFEST"
+  exit 1
+fi
+
+SPRINT_NAME=$(jq -r '.sprint' "$MANIFEST")
+SPRINT_NUM=$(echo "$SPRINT_NAME" | grep -oE '^[0-9]+')
+DOC_LOG="$SPRINT_DIR/document.log"
+
+# Sprint summary goes in the sprint folder itself (no global docs in parent)
+SPRINT_DOC_FILE="$SPRINT_DIR/SUMMARY.md"
+
+echo "Updating documentation for sprint: $SPRINT_NAME"
+echo "Sprint summary: $SPRINT_DOC_FILE"
+echo "Repos: $REPOS"
+
+# Gather context
+CHUNKS_FILE="$SPRINT_DIR/chunks.json"
+CHUNKS_CONTENT=""
+if [[ -f "$CHUNKS_FILE" ]]; then
+  CHUNKS_CONTENT=$(cat "$CHUNKS_FILE")
+fi
+
+# Get commits from manifest (per-repo format)
+COMMITS=""
+COMMIT_DATA=$(jq -r '.commits[] | "Iteration \(.iteration): chunk \(.chunk_id)"' "$MANIFEST" 2>/dev/null || echo "")
+for repo in $REPOS; do
+  REPO_COMMITS=$(jq -r ".commits[].repos.$repo // empty" "$MANIFEST" 2>/dev/null | grep -v null | head -5)
+  if [[ -n "$REPO_COMMITS" ]]; then
+    COMMITS+="### $repo commits
+$REPO_COMMITS
+
+"
+  fi
+done
+
+# Identify modified repos from chunks
+MODIFIED_REPOS=$(jq -r '.chunks[].repo // empty' "$CHUNKS_FILE" 2>/dev/null | sort -u || echo "")
+if [[ -z "$MODIFIED_REPOS" ]]; then
+  MODIFIED_REPOS="$REPOS"
+fi
+
+# Get artifact info organized by repo
+ARTIFACT_INFO=""
+for repo in $MODIFIED_REPOS; do
+  if [[ "$repo" == "both" ]]; then
+    continue
+  fi
+  REPO_ARTIFACTS=$(jq -r --arg repo "$repo" '.chunks[] | select(.repo == $repo) | .artifacts[]? // empty' "$CHUNKS_FILE" 2>/dev/null | sort -u)
+  if [[ -n "$REPO_ARTIFACTS" ]]; then
+    ARTIFACT_INFO+="### $repo files
+\`\`\`
+$REPO_ARTIFACTS
+\`\`\`
+
+"
+  fi
+done
+
+# List each repo's CLAUDE.md for context
+REPO_DOCS=""
+for repo in $REPOS; do
+  CLAUDE_MD="$PROJECT_ROOT/$repo/CLAUDE.md"
+  if [[ -f "$CLAUDE_MD" ]]; then
+    REPO_DOCS+="### $repo/CLAUDE.md (first 50 lines)
+\`\`\`markdown
+$(head -50 "$CLAUDE_MD")
+\`\`\`
+
+"
+  fi
+done
+
+# Load prompt template
+PROMPT_TEMPLATE=$(cat "$SCRIPT_DIR/prompts/document.md")
+
+# Build full prompt
+FULL_PROMPT=$(cat <<EOF
+$PROMPT_TEMPLATE
+
+## Sprint: $SPRINT_NAME (Sprint $SPRINT_NUM)
+
+## Multi-Repo Project
+
+This is a multi-repo project. Update documentation in each modified repo.
+
+**IMPORTANT**: Always \`cd\` into the repo directory before running git commands!
+
+## Chunks Completed:
+\`\`\`json
+$CHUNKS_CONTENT
+\`\`\`
+
+## Commits (per repo):
+$COMMITS
+
+## Files Modified by Repo:
+$ARTIFACT_INFO
+
+## Existing CLAUDE.md Files:
+$REPO_DOCS
+
+## Output Locations:
+1. Sprint summary: $SPRINT_DOC_FILE
+2. Per-repo docs: Update each repo's CLAUDE.md as needed
+
+## Instructions:
+1. Create the sprint summary at $SPRINT_DOC_FILE (concise, 50-100 lines)
+2. Update CLAUDE.md in each modified repo if the sprint added:
+   - New commands or scripts
+   - New patterns or conventions
+   - New features to document
+3. Do NOT add "Generated with" or "Co-Authored-By" lines
+4. Commit to each repo that was updated:
+   - \`cd api && git add -A && git commit -m "docs: update for sprint $SPRINT_NUM"\`
+   - \`cd frontend && git add -A && git commit -m "docs: update for sprint $SPRINT_NUM"\`
+EOF
+)
+
+# Run Claude for documentation updates
+echo "Running Claude for documentation updates..."
+cd "$PROJECT_ROOT" && claude --dangerously-skip-permissions -p "$FULL_PROMPT" 2>&1 | tee "$DOC_LOG" || {
+  echo "WARNING: Claude documentation generation exited with non-zero status"
+}
+
+# Check results
+echo ""
+if [[ -f "$SPRINT_DOC_FILE" ]]; then
+  echo "Sprint summary created: $SPRINT_DOC_FILE"
+else
+  echo "WARNING: Sprint summary not created at $SPRINT_DOC_FILE"
+fi
+
+echo "Documentation update complete. See $DOC_LOG for details."

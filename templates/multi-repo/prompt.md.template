@@ -1,0 +1,98 @@
+# Sprint: [SPRINT_NAME]
+
+## Multi-Repo Project Structure
+
+You are working in a multi-repo project orchestrated from a parent directory:
+
+```
+[PROJECT_ROOT]/           # You are here (working directory)
+├── .ralph/               # Ralph configuration (orchestration only, NO .git here)
+├── api/                  # Backend repo (has its own .git)
+│   └── CLAUDE.md
+├── frontend/             # Frontend repo (has its own .git)
+│   └── CLAUDE.md
+└── CLAUDE.md             # Project overview
+```
+
+**CRITICAL: Git operations must be run from within each repo directory!**
+
+## Instructions
+
+1. Read `.ralph/sprints/[SPRINT_FOLDER]/IMPLEMENTATION_PLAN.md` for the big picture
+2. Read `.ralph/sprints/[SPRINT_FOLDER]/README.md` for sprint overview
+3. Read `.ralph/sprints/[SPRINT_FOLDER]/relevant-specs.md` for schema/patterns
+4. Read `.ralph/sprints/[SPRINT_FOLDER]/chunks.json` for the task list
+5. Note the `repo` field on each chunk - it tells you which repo(s) to modify
+6. Find the first chunk where `passes: false`
+7. Complete that chunk's acceptance criteria
+8. Update chunks.json: set `"passes": true` for the completed chunk
+9. Output: `<promise>RALPH_COMPLETE</promise>`
+
+## Chunk Types by Repo
+
+Chunks have a `repo` field:
+- `"repo": "api"` - Only modify files in `api/`
+- `"repo": "frontend"` - Only modify files in `frontend/`
+- `"repo": "both"` - Modify files in both repos, commit to each separately
+
+## Git Operations (IMPORTANT!)
+
+**Never run git commands from the project root** - there's no git repo there.
+
+For API changes:
+```bash
+cd api && git add -A && git commit -m "feat: your message"
+```
+
+For Frontend changes:
+```bash
+cd frontend && git add -A && git commit -m "feat: your message"
+```
+
+For changes spanning both repos:
+```bash
+cd api && git add -A && git commit -m "feat: your message (api)"
+cd ../frontend && git add -A && git commit -m "feat: your message (frontend)"
+```
+
+## Reference Patterns
+
+- API patterns: `api/CLAUDE.md`
+- Frontend patterns: `frontend/CLAUDE.md`
+- [List other key files to follow as patterns]
+
+## Commands
+
+```bash
+# Start services (if using Docker)
+cd api && docker compose up -d
+cd frontend && docker compose up -d
+
+# Run tests
+cd api && yarn test
+cd frontend && yarn test
+
+# Type checking
+cd api && yarn typecheck
+cd frontend && yarn typecheck
+```
+
+## Completion Protocol
+
+When current chunk's acceptance criteria are ALL verified:
+
+1. Edit `.ralph/sprints/[SPRINT_FOLDER]/chunks.json` - set `"passes": true` for this chunk
+2. Git commit your work in the appropriate repo(s):
+   - Check the chunk's `repo` field
+   - Commit to each repo that was modified
+   - Use clean, descriptive messages
+3. Output exactly: `<promise>RALPH_COMPLETE</promise>`
+
+**Git commit rules**:
+- Commit to EACH repo that was modified
+- Use clean, descriptive messages (no "Generated with Claude" or "Co-Authored-By")
+- Always `cd` into the repo before git commands
+
+If blocked and need human input:
+
+<blocked>Describe what you need</blocked>

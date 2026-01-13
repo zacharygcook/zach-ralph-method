@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Code Review Hook (Multi-Repo) - Uses Codex for autonomous code review
+# Aggregates diffs from all repos, instructs agent to review each
+
+set -euo pipefail
+
+SPRINT_DIR="$1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+MANIFEST="$SPRINT_DIR/manifest.json"
+REVIEW_FILE="$SPRINT_DIR/REVIEW.md"
+REVIEW_LOG="$SPRINT_DIR/review.log"
+
+# Load config for REPOS
+source "$SCRIPT_DIR/config.env"
+REPOS="${REPOS:-api frontend}"
+
+# Validate manifest exists
+if [[ ! -f "$MANIFEST" ]]; then
+  echo "ERROR: Manifest not found: $MANIFEST"
+  exit 1
+fi
+
+SPRINT_NAME=$(jq -r '.sprint' "$MANIFEST")
+
+# Build commit range info for each repo
+REPO_COMMIT_INFO=""
+for repo in $REPOS; do
+  START_COMMIT=$(jq -r ".repos.$repo.start_commit // \"unknown\"" "$MANIFEST")
+  END_COMMIT=$(jq -r ".repos.$repo.end_commit // \"HEAD\"" "$MANIFEST")
+
+  if [[ "$START_COMMIT" != "unknown" ]] && [[ "$END_COMMIT" != "null" ]]; then
+    REPO_COMMIT_INFO+="
+### $repo
+- Start: \`$START_COMMIT\`
+- End: \`$END_COMMIT\`
+- View diff: \`cd $repo && git diff $START_COMMIT..$END_COMMIT\`
+- View log: \`cd $repo && git log $START_COMMIT..$END_COMMIT --oneline\`
+"
+  fi
+done
+
+if [[ -z "$REPO_COMMIT_INFO" ]]; then
+  echo "ERROR: No valid commit ranges found in manifest"
+  exit 1
+fi
+
+echo "Reviewing commits across repos: $REPOS"
+
+# Get chunks content
+CHUNKS_FILE="$SPRINT_DIR/chunks.json"
+CHUNKS_CONTENT=""
+if [[ -f "$CHUNKS_FILE" ]]; then
+  CHUNKS_CONTENT=$(cat "$CHUNKS_FILE")
+fi
+
+# Build review prompt
+REVIEW_PROMPT=$(cat "$SCRIPT_DIR/prompts/review.md")
+
+# Create the full prompt for multi-repo review
+FULL_PROMPT=$(cat <<EOF
+$REVIEW_PROMPT
+
+## Sprint: $SPRINT_NAME
+
+## Multi-Repo Project
+
+This is a multi-repo project. You must review changes in each repo separately.
+
+**IMPORTANT**: Always \`cd\` into the repo directory before running git commands!
+
+## Commit Ranges to Review:
+$REPO_COMMIT_INFO
+
+## Chunks Completed:
+\`\`\`json
+$CHUNKS_CONTENT
+\`\`\`
+
+## Output Instructions:
+1. Review the diff in EACH repo using git commands (cd into repo first!)
+2. Write your consolidated review to: $REVIEW_FILE
+3. Organize review by repo (## API Review, ## Frontend Review)
+4. Fix ALL issues you find (critical, quality, and style)
+5. Document your reasoning for each fix in the review file
+6. Mark controversial fixes with: // REVIEW-FIX (CONTROVERSIAL): reason
+7. Commit fixes to EACH repo that was modified:
+   - \`cd api && git add -A && git commit -m "fix(review): apply review fixes"\`
+   - \`cd frontend && git add -A && git commit -m "fix(review): apply review fixes"\`
+8. Do NOT add "Generated with" or "Co-Authored-By" lines to commits
+EOF
+)
+
+# Run Codex review from project root
+echo "Running Codex code review..."
+cd "$PROJECT_ROOT" && codex exec --full-auto --json "$FULL_PROMPT" 2>&1 \
+  | tee "$REVIEW_LOG" \
+  | python3 "$SCRIPT_DIR/format-codex-stream.py" || {
+  echo "WARNING: Codex review exited with non-zero status"
+  echo "Check log: $REVIEW_LOG"
+}
+
+# Check if review was created
+if [[ -f "$REVIEW_FILE" ]]; then
+  echo "Review complete: $REVIEW_FILE"
+else
+  echo "WARNING: Review file not created at $REVIEW_FILE"
+fi

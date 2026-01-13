@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# Test Suite Generation Hook (Multi-Repo) - Uses Claude for test creation
+# Creates per-sprint test suites for each modified repo
+
+set -euo pipefail
+
+SPRINT_DIR="$1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+MANIFEST="$SPRINT_DIR/manifest.json"
+
+# Load config for REPOS
+source "$SCRIPT_DIR/config.env"
+REPOS="${REPOS:-api frontend}"
+
+# Validate manifest exists
+if [[ ! -f "$MANIFEST" ]]; then
+  echo "ERROR: Manifest not found: $MANIFEST"
+  exit 1
+fi
+
+SPRINT_NAME=$(jq -r '.sprint' "$MANIFEST")
+SPRINT_NUM=$(echo "$SPRINT_NAME" | grep -oE '^[0-9]+')
+
+TEST_LOG="$SPRINT_DIR/test.log"
+FAILURE_REPORT="$SPRINT_DIR/TEST_FAILURE_REPORT.md"
+
+echo "Generating test suites for sprint: $SPRINT_NAME"
+echo "Repos: $REPOS"
+
+# Gather context
+CHUNKS_FILE="$SPRINT_DIR/chunks.json"
+CHUNKS_CONTENT=""
+if [[ -f "$CHUNKS_FILE" ]]; then
+  CHUNKS_CONTENT=$(cat "$CHUNKS_FILE")
+fi
+
+# Get acceptance criteria
+ACCEPTANCE=$(jq -r '.chunks[] | "## Chunk \(.id): \(.title) (repo: \(.repo // "unspecified"))\n\(.acceptance_criteria | map("- " + .) | join("\n"))"' "$CHUNKS_FILE" 2>/dev/null || echo "")
+
+# Identify which repos were modified (from chunks)
+MODIFIED_REPOS=$(jq -r '.chunks[].repo // empty' "$CHUNKS_FILE" 2>/dev/null | sort -u || echo "")
+if [[ -z "$MODIFIED_REPOS" ]]; then
+  MODIFIED_REPOS="$REPOS"  # Default to all if not specified
+fi
+
+# Build repo-specific test info
+REPO_TEST_INFO=""
+for repo in $MODIFIED_REPOS; do
+  if [[ "$repo" == "both" ]]; then
+    continue  # Will handle both repos individually
+  fi
+
+  REPO_PATH="$PROJECT_ROOT/$repo"
+  if [[ -d "$REPO_PATH" ]]; then
+    # Find test directory pattern
+    if [[ -d "$REPO_PATH/tests" ]]; then
+      TEST_DIR="$REPO_PATH/tests/sprint"
+    elif [[ -d "$REPO_PATH/test" ]]; then
+      TEST_DIR="$REPO_PATH/test/sprint"
+    elif [[ -d "$REPO_PATH/__tests__" ]]; then
+      TEST_DIR="$REPO_PATH/__tests__/sprint"
+    else
+      TEST_DIR="$REPO_PATH/tests/sprint"  # Default
+    fi
+
+    REPO_TEST_INFO+="
+### $repo
+- Test directory: \`$TEST_DIR\`
+- Test file: \`$TEST_DIR/sprint_${SPRINT_NUM}.spec.ts\`
+- Run command: \`cd $repo && yarn test\` (or project-specific)
+"
+  fi
+done
+
+# Find existing test patterns across repos
+EXISTING_TESTS=""
+for repo in $REPOS; do
+  REPO_PATH="$PROJECT_ROOT/$repo"
+  TEST_FILES=$(find "$REPO_PATH" -name "*.spec.ts" -o -name "*.test.ts" 2>/dev/null | head -2)
+  for test_file in $TEST_FILES; do
+    if [[ -f "$test_file" ]]; then
+      REL_PATH="${test_file#$PROJECT_ROOT/}"
+      EXISTING_TESTS+="### $REL_PATH
+\`\`\`typescript
+$(head -40 "$test_file")
+\`\`\`
+
+"
+    fi
+  done
+done
+
+# Load prompt template
+PROMPT_TEMPLATE=$(cat "$SCRIPT_DIR/prompts/test.md")
+
+# Build full prompt
+FULL_PROMPT=$(cat <<EOF
+$PROMPT_TEMPLATE
+
+## Sprint: $SPRINT_NAME
+
+## Multi-Repo Project
+
+This is a multi-repo project. Create tests for each repo that was modified.
+
+**IMPORTANT**: Always \`cd\` into the repo directory before running commands!
+
+## Repos Modified:
+$REPO_TEST_INFO
+
+## Chunks & Acceptance Criteria:
+$ACCEPTANCE
+
+## Chunks JSON:
+\`\`\`json
+$CHUNKS_CONTENT
+\`\`\`
+
+## Existing Test Patterns:
+$EXISTING_TESTS
+
+## Output Instructions:
+1. Create test files in EACH modified repo:
+   - API tests: \`api/tests/sprint/sprint_${SPRINT_NUM}.spec.ts\`
+   - Frontend tests: \`frontend/tests/sprint/sprint_${SPRINT_NUM}.spec.ts\` (if applicable)
+2. Add test scripts to each repo's package.json if needed
+3. Run tests in each repo to verify they pass
+4. If tests fail, debug and fix (up to 3 attempts per repo)
+5. If tests STILL fail: create $FAILURE_REPORT with details
+6. Do NOT commit failing tests
+7. Do NOT add "Generated with" or "Co-Authored-By" lines
+8. Commit passing tests to each repo:
+   - \`cd api && git add -A && git commit -m "test(sprint-$SPRINT_NUM): add sprint tests"\`
+   - \`cd frontend && git add -A && git commit -m "test(sprint-$SPRINT_NUM): add sprint tests"\`
+EOF
+)
+
+# Run Claude for test generation
+echo "Running Claude for test suite generation..."
+cd "$PROJECT_ROOT" && claude --dangerously-skip-permissions -p "$FULL_PROMPT" \
+  --output-format=stream-json --include-partial-messages --verbose 2>&1 \
+  | tee "$TEST_LOG" \
+  | python3 "$SCRIPT_DIR/format-stream.py" || {
+  echo "WARNING: Claude test generation exited with non-zero status"
+}
+
+# Check outcomes
+echo ""
+echo "=========================================="
+
+if [[ -f "$FAILURE_REPORT" ]]; then
+  echo "TEST GENERATION INCOMPLETE"
+  echo "=========================================="
+  echo ""
+  echo "Agent could not get all tests passing."
+  echo "Failure report created: $FAILURE_REPORT"
+  echo ""
+  head -20 "$FAILURE_REPORT"
+  echo ""
+  echo "Please review the failure report and investigate manually."
+  exit 3
+fi
+
+echo "TEST GENERATION COMPLETE"
+echo "=========================================="
+echo ""
+echo "Run tests manually to verify:"
+for repo in $MODIFIED_REPOS; do
+  if [[ "$repo" != "both" ]]; then
+    echo "  cd $PROJECT_ROOT/$repo && yarn test"
+  fi
+done
+exit 0

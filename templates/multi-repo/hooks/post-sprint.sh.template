@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Post-Sprint Hook Orchestrator
+# Runs all post-sprint automation: review, docs, tests
+
+set -euo pipefail
+
+SPRINT_DIR="$1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RALPH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+SPRINT_NAME=$(basename "$SPRINT_DIR")
+
+echo "========================================"
+echo "Running post-sprint hooks for: $SPRINT_NAME"
+echo "========================================"
+echo ""
+
+# 1. Code Review (Codex)
+if [[ -x "$SCRIPT_DIR/review.sh" ]]; then
+  echo "[1/3] Running code review..."
+  "$SCRIPT_DIR/review.sh" "$SPRINT_DIR" || {
+    echo "WARNING: Code review failed, continuing..."
+  }
+  echo ""
+else
+  echo "[1/3] Skipping code review (review.sh not found)"
+fi
+
+# 2. Documentation Generation
+if [[ -x "$SCRIPT_DIR/document.sh" ]]; then
+  echo "[2/3] Generating documentation..."
+  "$SCRIPT_DIR/document.sh" "$SPRINT_DIR" || {
+    echo "WARNING: Documentation generation failed, continuing..."
+  }
+  echo ""
+else
+  echo "[2/3] Skipping documentation (document.sh not found)"
+fi
+
+# 3. Test Suite Creation
+if [[ -x "$SCRIPT_DIR/test.sh" ]]; then
+  echo "[3/3] Creating test suite..."
+  "$SCRIPT_DIR/test.sh" "$SPRINT_DIR" || {
+    echo "WARNING: Test suite creation failed, continuing..."
+  }
+  echo ""
+else
+  echo "[3/3] Skipping test suite (test.sh not found)"
+fi
+
+echo "========================================"
+echo "Post-sprint hooks complete!"
+echo "========================================"
