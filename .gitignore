@@ -1,9 +1,14 @@
 # Project repos (cloned here for autonomous coding, tracked in their own repos)
-# Exclude all directories except docs/ and templates/
 blackbird/
-*/
+
+# Exclude root-level directories except docs/ and templates/
+/*
 !docs/
 !templates/
+!/CLAUDE.md
+!/AGENTS.md
+!/README.md
+!/.gitignore
 
 # Examples and notes
 examples-at-SPEC-stage/
