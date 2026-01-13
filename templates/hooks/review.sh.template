@@ -70,7 +70,7 @@ EOF
 
 # Run Codex review
 echo "Running Codex code review..."
-codex --full-auto "$FULL_PROMPT" 2>&1 | tee "$REVIEW_LOG" || {
+codex --full-auto "$FULL_PROMPT" > "$REVIEW_LOG" 2>&1 || {
   echo "WARNING: Codex review exited with non-zero status"
 }
 
