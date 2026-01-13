@@ -107,8 +107,12 @@ EOF
 )
 
 # Run Claude for test generation
+# Use stream-json for real-time visibility of tool calls + formatted output
 echo "Running Claude for test suite generation..."
-claude --dangerously-skip-permissions -p "$FULL_PROMPT" 2>&1 | tee "$TEST_LOG" || {
+claude --dangerously-skip-permissions -p "$FULL_PROMPT" \
+  --output-format=stream-json --include-partial-messages --verbose 2>&1 \
+  | tee "$TEST_LOG" \
+  | python3 "$SCRIPT_DIR/format-stream.py" || {
   echo "WARNING: Claude test generation exited with non-zero status"
 }
 
