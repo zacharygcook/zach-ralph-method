@@ -72,7 +72,10 @@ run_claude() {
 run_codex() {
   # Use 'codex exec' for non-interactive operation
   # --full-auto = workspace-write sandbox + on-request approvals
-  codex exec --full-auto "$(cat "$PROMPT_FILE")" 2>&1
+  # --json streams JSONL events for real-time visibility
+  codex exec --full-auto --json "$(cat "$PROMPT_FILE")" 2>&1 \
+    | tee "$LOG_FILE" \
+    | python3 "$SCRIPT_DIR/format-codex-stream.py"
 }
 
 run_amp() {
@@ -142,9 +145,10 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
   export SUMMARY_LOG
 
   # Run agent (allow non-zero exit - we check log for completion signals)
+  # Note: claude and codex handle their own tee/logging internally
   case "$AGENT" in
     claude)   run_claude || true ;;
-    codex)    run_codex | tee "$LOG_FILE" || true ;;
+    codex)    run_codex || true ;;
     amp)      run_amp | tee "$LOG_FILE" || true ;;
     opencode) run_opencode | tee "$LOG_FILE" || true ;;
     droid)    run_droid | tee "$LOG_FILE" || true ;;
