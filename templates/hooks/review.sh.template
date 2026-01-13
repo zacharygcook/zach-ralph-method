@@ -69,9 +69,13 @@ EOF
 )
 
 # Run Codex review
+# Use 'codex exec' for non-interactive operation (not 'codex' which needs a TTY)
+# --full-auto = workspace-write sandbox + on-request approvals
+# For fully autonomous: use --yolo (--dangerously-bypass-approvals-and-sandbox)
 echo "Running Codex code review..."
-codex --full-auto "$FULL_PROMPT" > "$REVIEW_LOG" 2>&1 || {
+cd "$PROJECT_ROOT" && codex exec --full-auto "$FULL_PROMPT" > "$REVIEW_LOG" 2>&1 || {
   echo "WARNING: Codex review exited with non-zero status"
+  echo "Check log: $REVIEW_LOG"
 }
 
 # Check if review was created

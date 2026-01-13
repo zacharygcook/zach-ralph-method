@@ -70,7 +70,9 @@ run_claude() {
 }
 
 run_codex() {
-  codex --auto-approve --prompt-file "$PROMPT_FILE" 2>&1
+  # Use 'codex exec' for non-interactive operation
+  # --full-auto = workspace-write sandbox + on-request approvals
+  codex exec --full-auto "$(cat "$PROMPT_FILE")" 2>&1
 }
 
 run_amp() {
