@@ -143,7 +143,7 @@ run_claude() {
 
 run_codex() {
   cd "$PROJECT_ROOT"
-  codex exec --full-auto --json "$(cat "$PROMPT_FILE")" 2>&1 \
+  codex exec --yolo --json "$(cat "$PROMPT_FILE")" 2>&1 \
     | tee "$LOG_FILE" \
     | python3 "$SCRIPT_DIR/format-codex-stream.py"
 }

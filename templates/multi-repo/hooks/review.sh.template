@@ -93,7 +93,7 @@ EOF
 
 # Run Codex review from project root
 echo "Running Codex code review..."
-cd "$PROJECT_ROOT" && codex exec --full-auto --json "$FULL_PROMPT" 2>&1 \
+cd "$PROJECT_ROOT" && codex exec --yolo --json "$FULL_PROMPT" 2>&1 \
   | tee "$REVIEW_LOG" \
   | python3 "$SCRIPT_DIR/format-codex-stream.py" || {
   echo "WARNING: Codex review exited with non-zero status"

@@ -70,11 +70,10 @@ EOF
 
 # Run Codex review
 # Use 'codex exec' for non-interactive operation (not 'codex' which needs a TTY)
-# --full-auto = workspace-write sandbox + on-request approvals
+# --yolo = no sandbox, no approvals (max autonomy)
 # --json streams JSONL events for real-time visibility
-# For fully autonomous: use --yolo (--dangerously-bypass-approvals-and-sandbox)
 echo "Running Codex code review..."
-cd "$PROJECT_ROOT" && codex exec --full-auto --json "$FULL_PROMPT" 2>&1 \
+cd "$PROJECT_ROOT" && codex exec --yolo --json "$FULL_PROMPT" 2>&1 \
   | tee "$REVIEW_LOG" \
   | python3 "$SCRIPT_DIR/format-codex-stream.py" || {
   echo "WARNING: Codex review exited with non-zero status"

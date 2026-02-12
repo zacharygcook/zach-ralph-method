@@ -134,15 +134,15 @@ See `docs/sprint-structure.md` for ASCII diagrams and full details.
 | Agent | Autonomous Flag |
 |-------|-----------------|
 | claude | `--dangerously-skip-permissions` (sandbox!) |
-| codex | `exec --full-auto` (or `exec --yolo` for dangerous) |
+| codex | `exec --yolo` (max autonomy, no sandbox) |
 | amp | `--autonomous` |
 | opencode | `--auto` |
 | droid | `exec --auto high` |
 
 **Codex notes:**
 - Must use `codex exec` subcommand for non-interactive operation (`codex` alone needs TTY)
-- `--full-auto` = workspace-write sandbox + on-request approvals
 - `--yolo` (alias: `--dangerously-bypass-approvals-and-sandbox`) = no sandbox, no approvals
+- `--full-auto` = workspace-write sandbox + on-request approvals (less autonomous)
 - Prompts passed as argument or via stdin with `-`, not `--prompt-file`
 
 ## Claude Code: Real-Time Output

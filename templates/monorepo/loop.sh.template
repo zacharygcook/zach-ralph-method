@@ -71,9 +71,9 @@ run_claude() {
 
 run_codex() {
   # Use 'codex exec' for non-interactive operation
-  # --full-auto = workspace-write sandbox + on-request approvals
+  # --yolo = no sandbox, no approvals (max autonomy)
   # --json streams JSONL events for real-time visibility
-  codex exec --full-auto --json "$(cat "$PROMPT_FILE")" 2>&1 \
+  codex exec --yolo --json "$(cat "$PROMPT_FILE")" 2>&1 \
     | tee "$LOG_FILE" \
     | python3 "$SCRIPT_DIR/format-codex-stream.py"
 }
