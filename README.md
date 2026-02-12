@@ -52,9 +52,10 @@ Iteration N: All chunks pass → loop exits → prompts for next sprint
 
 Each iteration:
 - Starts with a clean context window (fresh agent process)
+- Reads `SCRATCHPAD.md` for learnings from prior iterations (dead ends, gotchas)
 - Reads the current state from files (not memory)
 - Makes progress on the next incomplete chunk
-- Commits, marks chunk as passed, outputs RALPH_COMPLETE
+- Appends learnings to `SCRATCHPAD.md`, commits, marks chunk as passed, outputs RALPH_COMPLETE
 - Loop continues to next iteration automatically
 
 ## Quick Start

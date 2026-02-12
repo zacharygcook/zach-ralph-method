@@ -163,7 +163,8 @@ Uses `tee` for **real-time streaming** and **auto-continues** through all chunks
     │   ├── README.md
     │   ├── IMPLEMENTATION_PLAN.md
     │   ├── relevant-specs.md
-    │   └── chunks.json
+    │   ├── chunks.json
+    │   └── SCRATCHPAD.md           # Cross-iteration knowledge transfer
     └── 2-api-integration/          # Next sprint
         └── ...
 ```
@@ -231,6 +232,22 @@ for line in sys.stdin:
     elif data.get("type") == "result":
         print(f"\n{BOLD}Done:{RESET} ${data.get('total_cost_usd', 0):.4f}")
 ```
+
+## Cross-Iteration Knowledge Transfer
+
+When the loop resets context between chunks, agents lose all "negative knowledge" — dead ends they explored, gotchas they discovered, non-obvious decisions they made. SCRATCHPAD.md solves this.
+
+**How it works**: `loop.sh` creates `SCRATCHPAD.md` during sprint initialization. The prompt instructs agents to read it first (step 1) and append learnings before finishing (step 9/10).
+
+**Three completion scenarios**:
+
+| Scenario | SCRATCHPAD Action |
+|----------|-------------------|
+| **Success** | Append what worked, gotchas, non-obvious decisions → mark chunk → commit → RALPH_COMPLETE |
+| **Incomplete** | Append what was tried, where you left off → commit WIP (do NOT mark chunk as passed) |
+| **Blocked** | Append full context (what was tried, why it failed) → output `<blocked>` signal |
+
+**What to write**: Focus on things the next iteration wouldn't know from reading code alone — why an approach was rejected, hidden dependencies, ordering constraints, API quirks.
 
 ## Tips
 
