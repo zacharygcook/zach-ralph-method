@@ -67,8 +67,7 @@ See `templates/GOAL.md.template` and `templates/GOALS.md.template` for formats.
         ├── README.md           # Sprint goal (3-4 lines)
         ├── IMPLEMENTATION_PLAN.md
         ├── relevant-specs.md
-        ├── chunks.json
-        └── SCRATCHPAD.md       # Cross-iteration knowledge transfer
+        └── chunks.json
 ```
 
 Set `CURRENT_SPRINT=1-sprint-name` in config.env to select active sprint.
@@ -102,16 +101,14 @@ After all chunks pass, the loop runs hooks for automation:
 
 **chunks.json** - Sequenced tasks with acceptance criteria, each completable in one context window.
 
-**SCRATCHPAD.md** - Cross-iteration knowledge transfer. Agents read first, write last. Persists dead ends, gotchas, and non-obvious decisions across context resets.
-
 See `docs/sprint-structure.md` for ASCII diagrams and full details.
 
 ## Execution Workflow
 
 1. Enter planning mode → create `IMPLEMENTATION_PLAN.md`
 2. Create `chunks.json` based on plan
-3. Run `./.ralph/loop.sh` (creates `SCRATCHPAD.md` automatically)
-4. Agent reads `SCRATCHPAD.md` first → completes chunk → appends learnings → commits → sets `passes: true` → outputs RALPH_COMPLETE
+3. Run `./.ralph/loop.sh`
+4. Agent completes chunk → commits → sets `passes: true` → outputs RALPH_COMPLETE
 5. Loop auto-continues to next chunk (fresh context window per iteration)
 6. Loop exits when: all chunks pass, agent blocked, or max iterations reached
 
@@ -124,9 +121,8 @@ See `docs/sprint-structure.md` for ASCII diagrams and full details.
 **Completion sequence**:
 1. Complete chunk's acceptance criteria
 2. `git add -A && git commit -m "Add X feature"` (descriptive message)
-3. Append learnings to `SCRATCHPAD.md` (dead ends, gotchas, non-obvious decisions)
-4. Update chunks.json: set `passes: true`
-5. Output: `<promise>RALPH_COMPLETE</promise>`
+3. Update chunks.json: set `passes: true`
+4. Output: `<promise>RALPH_COMPLETE</promise>`
 
 **Commit rules for prompts**:
 - No "Generated with Claude Code" lines

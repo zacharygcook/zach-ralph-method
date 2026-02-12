@@ -48,20 +48,6 @@ if [[ ! -f "$MANIFEST_FILE" ]] || ! jq -e '.start_commit' "$MANIFEST_FILE" >/dev
 EOF
 fi
 
-# Create SCRATCHPAD.md if it doesn't exist yet
-SCRATCHPAD_FILE="$SPRINT_DIR/SCRATCHPAD.md"
-if [[ ! -f "$SCRATCHPAD_FILE" ]]; then
-  cat > "$SCRATCHPAD_FILE" << EOF
-# Sprint: $CURRENT_SPRINT — Agent Scratchpad
-
-> This file persists between iterations. Each agent should READ this first and APPEND learnings before finishing.
-
----
-
-EOF
-  echo "Created SCRATCHPAD.md for cross-iteration knowledge transfer"
-fi
-
 # Check if all chunks pass
 all_chunks_pass() {
   ! grep -q '"passes": false' "$CHUNKS_FILE"

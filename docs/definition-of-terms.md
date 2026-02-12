@@ -119,22 +119,6 @@ Examples:
 
 ---
 
-## Scratchpad
-
-The **scratchpad** (`SCRATCHPAD.md`) is a per-sprint file that persists "negative knowledge" across context resets — dead ends, gotchas, non-obvious decisions, and debugging insights that would otherwise be lost when the loop starts a fresh iteration.
-
-Agents read the scratchpad first (before any other sprint file) and append learnings last (before outputting RALPH_COMPLETE). This creates a persistent memory layer that compensates for context window resets.
-
-**What belongs in the scratchpad**:
-- Approaches that were tried and rejected (and why)
-- Non-obvious ordering dependencies
-- API quirks or framework gotchas discovered during implementation
-- Where a WIP iteration left off
-
-**What doesn't belong**: Implementation plans (that's `IMPLEMENTATION_PLAN.md`), acceptance criteria (that's `chunks.json`), or code documentation.
-
----
-
 ## Trust Boundary
 
 A **trust boundary** is the scope within which you're comfortable with autonomous execution.

@@ -2,16 +2,14 @@
 
 ## Instructions
 
-1. Read `.ralph/sprints/[SPRINT_FOLDER]/SCRATCHPAD.md` for notes from prior iterations (dead ends, gotchas, decisions)
-2. Read `.ralph/sprints/[SPRINT_FOLDER]/IMPLEMENTATION_PLAN.md` for the big picture
-3. Read `.ralph/sprints/[SPRINT_FOLDER]/README.md` for sprint overview
-4. Read `.ralph/sprints/[SPRINT_FOLDER]/relevant-specs.md` for schema/patterns
-5. Read `.ralph/sprints/[SPRINT_FOLDER]/chunks.json` for the task list
-6. Find the first chunk where `passes: false`
-7. Complete that chunk's acceptance criteria
-8. Update chunks.json: set `"passes": true` for the completed chunk
-9. Append any learnings to SCRATCHPAD.md (what worked, what didn't, non-obvious decisions)
-10. Output: `<promise>RALPH_COMPLETE</promise>`
+1. Read `.ralph/sprints/[SPRINT_FOLDER]/IMPLEMENTATION_PLAN.md` for the big picture
+2. Read `.ralph/sprints/[SPRINT_FOLDER]/README.md` for sprint overview
+3. Read `.ralph/sprints/[SPRINT_FOLDER]/relevant-specs.md` for schema/patterns
+4. Read `.ralph/sprints/[SPRINT_FOLDER]/chunks.json` for the task list
+5. Find the first chunk where `passes: false`
+6. Complete that chunk's acceptance criteria
+7. Update chunks.json: set `"passes": true` for the completed chunk
+8. Output: `<promise>RALPH_COMPLETE</promise>`
 
 ## Reference Patterns
 
@@ -23,35 +21,18 @@
 [Common commands for this project]
 ```
 
-## File Boundaries
-
-- Sprint files live in `.ralph/sprints/[SPRINT_FOLDER]/`
-- SCRATCHPAD.md is at `.ralph/sprints/[SPRINT_FOLDER]/SCRATCHPAD.md`
-
 ## Completion Protocol
 
-### Success — chunk complete
-
 When current chunk's acceptance criteria are ALL verified:
-1. Edit `.ralph/sprints/[SPRINT_FOLDER]/chunks.json` — set `"passes": true` for this chunk
+1. Edit `.ralph/sprints/[SPRINT_FOLDER]/chunks.json` - set `"passes": true` for this chunk
 2. Git commit your work with a descriptive message (e.g., "Add user authentication models")
-3. Append learnings to `.ralph/sprints/[SPRINT_FOLDER]/SCRATCHPAD.md` — what worked, gotchas, non-obvious decisions
-4. Output exactly: `<promise>RALPH_COMPLETE</promise>`
-
-### Incomplete — ran out of context but made progress
-
-If you've made partial progress but can't finish the chunk:
-1. Git commit your work-in-progress with a clear message (e.g., "WIP: partial auth implementation")
-2. Append what you tried and where you left off to `.ralph/sprints/[SPRINT_FOLDER]/SCRATCHPAD.md`
-3. Do NOT set `passes: true` — the next iteration will pick up where you left off
-
-### Blocked — need human input
-
-If you cannot proceed without human intervention:
-1. Append full context to `.ralph/sprints/[SPRINT_FOLDER]/SCRATCHPAD.md` (what you tried, why it failed)
-2. Output: `<blocked>Describe what you need</blocked>`
+3. Output exactly: `<promise>RALPH_COMPLETE</promise>`
 
 **Git commit rules**:
 - Commit after completing the chunk, before RALPH_COMPLETE
 - Use a clean, descriptive message (no "Generated with Claude" or "Co-Authored-By")
 - Stage all relevant files: `git add -A && git commit -m "Your message"`
+
+If blocked and need human input:
+
+<blocked>Describe what you need</blocked>
