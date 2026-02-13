@@ -272,7 +272,7 @@ start_stream_sidecar() {
     ) &
   fi
 
-  echo "$!"
+  STARTED_SIDECAR_PID="$!"
 }
 
 stop_stream_sidecar() {
@@ -308,7 +308,8 @@ start_agent_iteration() {
       ;;
   esac
 
-  sidecar_pid=$(start_stream_sidecar "$formatter_path")
+  start_stream_sidecar "$formatter_path"
+  sidecar_pid="$STARTED_SIDECAR_PID"
 
   case "$AGENT" in
     claude)
