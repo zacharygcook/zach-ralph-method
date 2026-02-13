@@ -26,7 +26,7 @@ You are working in a multi-repo project orchestrated from a parent directory:
 6. Find the first chunk where `passes: false`
 7. Complete that chunk's acceptance criteria
 8. Update chunks.json: set `"passes": true` for the completed chunk
-9. Output: `<promise>RALPH_COMPLETE</promise>`
+9. Output: `<promise>RALPH_CHUNK_COMPLETE</promise>`
 
 ## Chunk Types by Repo
 
@@ -86,7 +86,11 @@ When current chunk's acceptance criteria are ALL verified:
    - Check the chunk's `repo` field
    - Commit to each repo that was modified
    - Use clean, descriptive messages
-3. Output exactly: `<promise>RALPH_COMPLETE</promise>`
+3. Output exactly: `<promise>RALPH_CHUNK_COMPLETE</promise>`
+
+**Completion markers** (use the right scope):
+- `RALPH_CHUNK_COMPLETE` - Current chunk is done (normal case)
+- `RALPH_SPRINT_COMPLETE` - ALL chunks are done, sprint is finished
 
 **Git commit rules**:
 - Commit to EACH repo that was modified

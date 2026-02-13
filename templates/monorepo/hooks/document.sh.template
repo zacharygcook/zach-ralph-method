@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Documentation Update Hook - Hybrid Approach
-# 1. Creates sprint summary in docs/sprints/
-# 2. Updates relevant main docs/ files
+# Documentation Update Hook - Hybrid approach.
 
 set -euo pipefail
 
@@ -10,17 +8,39 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MANIFEST="$SPRINT_DIR/manifest.json"
 
-# Validate manifest exists
+source "$SCRIPT_DIR/lib/ralph-common.sh"
+
+EVENT_LOG="${RALPH_EVENT_LOG:-$SPRINT_DIR/hooks.events.jsonl}"
+EXIT_DEP_MISSING=12
+EXIT_VALIDATION=14
+
+log_event() {
+  append_event "$EVENT_LOG" "$1" "$2" "$3"
+}
+
+preflight() {
+  local missing
+  missing=$(require_commands jq claude || true)
+  if [[ -n "$missing" ]]; then
+    echo "$missing"
+    log_event "document" "failed" "dependency_missing: $missing"
+    return "$EXIT_DEP_MISSING"
+  fi
+  return 0
+}
+
 if [[ ! -f "$MANIFEST" ]]; then
   echo "ERROR: Manifest not found: $MANIFEST"
-  exit 1
+  log_event "document" "failed" "manifest_missing"
+  exit "$EXIT_VALIDATION"
 fi
 
+preflight || exit $?
+
 SPRINT_NAME=$(jq -r '.sprint' "$MANIFEST")
-SPRINT_NUM=$(echo "$SPRINT_NAME" | grep -oE '^[0-9]+')
+SPRINT_NUM=$(echo "$SPRINT_NAME" | grep -oE '^[0-9]+' || echo "")
 DOC_LOG="$SPRINT_DIR/document.log"
 
-# Create sprint docs directory
 SPRINT_DOCS_DIR="$PROJECT_ROOT/docs/sprints"
 mkdir -p "$SPRINT_DOCS_DIR"
 SPRINT_DOC_FILE="$SPRINT_DOCS_DIR/$SPRINT_NAME.md"
@@ -28,21 +48,17 @@ SPRINT_DOC_FILE="$SPRINT_DOCS_DIR/$SPRINT_NAME.md"
 echo "Updating documentation for sprint: $SPRINT_NAME"
 echo "Sprint summary: $SPRINT_DOC_FILE"
 echo "Main docs: $PROJECT_ROOT/docs/"
+log_event "document" "running" "start sprint=$SPRINT_NAME"
 
-# Gather context
 CHUNKS_FILE="$SPRINT_DIR/chunks.json"
 CHUNKS_CONTENT=""
 if [[ -f "$CHUNKS_FILE" ]]; then
   CHUNKS_CONTENT=$(cat "$CHUNKS_FILE")
 fi
 
-# Get commits from manifest
 COMMITS=$(jq -r '.commits[] | "- \(.hash[0:7]) \(.message)"' "$MANIFEST" 2>/dev/null || echo "No commits recorded")
-
-# Get artifact files from chunks
 ARTIFACTS=$(jq -r '.chunks[].artifacts[]' "$CHUNKS_FILE" 2>/dev/null | sort -u || echo "")
 
-# Read artifact files (limit to first 100 lines each)
 ARTIFACT_CONTENT=""
 for artifact in $ARTIFACTS; do
   FULL_PATH="$PROJECT_ROOT/$artifact"
@@ -57,14 +73,10 @@ $(head -100 "$FULL_PATH")
   fi
 done
 
-# List existing docs for context
 EXISTING_DOCS=$(ls "$PROJECT_ROOT/docs/"*.md 2>/dev/null | xargs -I{} basename {} | tr '\n' ', ' || echo "none")
-
-# Load prompt template
 PROMPT_TEMPLATE=$(cat "$SCRIPT_DIR/prompts/document.md")
 
-# Build full prompt
-FULL_PROMPT=$(cat <<EOF
+FULL_PROMPT=$(cat <<EOF_PROMPT
 $PROMPT_TEMPLATE
 
 ## Sprint: $SPRINT_NAME (Sprint $SPRINT_NUM)
@@ -92,16 +104,21 @@ $EXISTING_DOCS
 2. Read and update relevant main docs in docs/
 3. Do NOT add "Generated with" or "Co-Authored-By" lines
 4. Commit with: docs: update documentation for sprint $SPRINT_NUM
-EOF
+EOF_PROMPT
 )
 
-# Run Claude for documentation updates
-echo "Running Claude for documentation updates..."
-claude --dangerously-skip-permissions -p "$FULL_PROMPT" 2>&1 | tee "$DOC_LOG" || {
-  echo "WARNING: Claude documentation generation exited with non-zero status"
-}
+set +e
+claude --dangerously-skip-permissions -p "$FULL_PROMPT" 2>&1 | tee "$DOC_LOG"
+DOC_EXIT=$?
+set -e
 
-# Check results
+if [[ "$DOC_EXIT" -ne 0 ]]; then
+  echo "WARNING: Claude documentation generation exited with non-zero status"
+  log_event "document" "failed" "claude_exit=$DOC_EXIT"
+else
+  log_event "document" "ok" "claude_exit=0"
+fi
+
 echo ""
 if [[ -f "$SPRINT_DOC_FILE" ]]; then
   echo "Sprint summary created: $SPRINT_DOC_FILE"
@@ -110,3 +127,4 @@ else
 fi
 
 echo "Documentation update complete. See $DOC_LOG for details."
+exit "$DOC_EXIT"

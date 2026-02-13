@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Test Suite Generation Hook (Multi-Repo) - Uses Claude for test creation
-# Creates per-sprint test suites for each modified repo
+# Test Suite Generation Hook (Multi-Repo) - phase-aware and rerun-safe.
 
 set -euo pipefail
 
@@ -9,66 +8,151 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MANIFEST="$SPRINT_DIR/manifest.json"
 
-# Load config for REPOS
+source "$SCRIPT_DIR/lib/ralph-common.sh"
 source "$SCRIPT_DIR/config.env"
 REPOS="${REPOS:-api frontend}"
 
-# Validate manifest exists
+EVENT_LOG="${RALPH_EVENT_LOG:-$SPRINT_DIR/hooks.events.jsonl}"
+HEARTBEAT_SEC="${HOOK_HEARTBEAT_SEC:-30}"
+BACKEND_TEST_IDLE_TIMEOUT_SEC="${BACKEND_TEST_IDLE_TIMEOUT_SEC:-0}"
+E2E_IDLE_TIMEOUT_SEC="${E2E_IDLE_TIMEOUT_SEC:-0}"
+
+EXIT_OK=0
+EXIT_TIMEOUT=10
+EXIT_IDLE_TIMEOUT=11
+EXIT_DEP_MISSING=12
+EXIT_INTERRUPTED=13
+EXIT_VALIDATION=14
+
+PHASE_GENERATE="generate_tests"
+PHASE_VERIFY="verify_backend_tests"
+PHASE_E2E="run_e2e"
+
+log_event() {
+  append_event "$EVENT_LOG" "$1" "$2" "$3"
+}
+
+manifest_update() {
+  manifest_update_locked "$MANIFEST" "$@" >/dev/null 2>&1 || return 1
+}
+
+update_phase() {
+  local phase="$1"
+  local status="$2"
+  local reason="${3:-null}"
+  local now
+  now=$(now_iso)
+
+  manifest_update \
+    --arg phase "$phase" \
+    --arg status "$status" \
+    --arg now "$now" \
+    --arg reason "$reason" \
+    '
+      .hooks.tests = (.hooks.tests // {"status":"pending","completed_at":null,"reason":null,"phases":{}})
+      | .hooks.tests.phases = (.hooks.tests.phases // {})
+      | .hooks.tests.phases[$phase] = (.hooks.tests.phases[$phase] // {"status":"pending","completed_at":null,"reason":null})
+      | .hooks.tests.phases[$phase].status = $status
+      | .hooks.tests.phases[$phase].reason = (if $reason == "null" then null else $reason end)
+      | .hooks.tests.phases[$phase].completed_at = (if ($status == "done" or $status == "skipped") then $now else .hooks.tests.phases[$phase].completed_at end)
+      | .hooks.tests.reason = (if ($status == "failed") then (if $reason == "null" then "phase_failed" else $reason end) else .hooks.tests.reason end)
+    '
+}
+
+phase_status() {
+  local phase="$1"
+  jq -r --arg phase "$phase" '.hooks.tests.phases[$phase].status // "pending"' "$MANIFEST" 2>/dev/null || echo "pending"
+}
+
+phase_is_complete() {
+  local phase="$1"
+  local status
+  status=$(phase_status "$phase")
+  [[ "$status" == "done" ]] || [[ "$status" == "skipped" ]]
+}
+
+run_monitored_command() {
+  local label="$1"
+  local log_file="$2"
+  local idle_timeout="$3"
+  shift 3
+
+  (
+    "$@"
+  ) > >(tee "$log_file") 2>&1 &
+  local pid=$!
+
+  monitor_process_with_heartbeat "$pid" "$label" "$log_file" "$HEARTBEAT_SEC" "$idle_timeout" "$EVENT_LOG"
+  return $?
+}
+
+preflight() {
+  local missing
+  missing=$(require_commands jq claude python3 || true)
+  if [[ -n "$missing" ]]; then
+    echo "$missing"
+    log_event "test" "failed" "dependency_missing: $missing"
+    return "$EXIT_DEP_MISSING"
+  fi
+  return 0
+}
+
 if [[ ! -f "$MANIFEST" ]]; then
   echo "ERROR: Manifest not found: $MANIFEST"
-  exit 1
+  log_event "test" "failed" "manifest_missing"
+  exit "$EXIT_VALIDATION"
 fi
 
+preflight || exit $?
+
 SPRINT_NAME=$(jq -r '.sprint' "$MANIFEST")
-SPRINT_NUM=$(echo "$SPRINT_NAME" | grep -oE '^[0-9]+')
+SPRINT_NUM=$(echo "$SPRINT_NAME" | grep -oE '^[0-9]+' || echo "")
+
+# Identify which repos were modified
+CHUNKS_FILE="$SPRINT_DIR/chunks.json"
+MODIFIED_REPOS=$(jq -r '.chunks[].repo // empty' "$CHUNKS_FILE" 2>/dev/null | sort -u || echo "")
+if [[ -z "$MODIFIED_REPOS" ]]; then
+  MODIFIED_REPOS="$REPOS"
+fi
 
 TEST_LOG="$SPRINT_DIR/test.log"
+VERIFY_LOG="$SPRINT_DIR/test-verify.log"
+E2E_LOG="$SPRINT_DIR/e2e-test.log"
 FAILURE_REPORT="$SPRINT_DIR/TEST_FAILURE_REPORT.md"
 
 echo "Generating test suites for sprint: $SPRINT_NAME"
 echo "Repos: $REPOS"
+echo "Modified repos: $MODIFIED_REPOS"
+log_event "test" "running" "start sprint=$SPRINT_NAME"
 
-# Gather context
-CHUNKS_FILE="$SPRINT_DIR/chunks.json"
 CHUNKS_CONTENT=""
 if [[ -f "$CHUNKS_FILE" ]]; then
   CHUNKS_CONTENT=$(cat "$CHUNKS_FILE")
 fi
 
-# Get acceptance criteria
 ACCEPTANCE=$(jq -r '.chunks[] | "## Chunk \(.id): \(.title) (repo: \(.repo // "unspecified"))\n\(.acceptance_criteria | map("- " + .) | join("\n"))"' "$CHUNKS_FILE" 2>/dev/null || echo "")
-
-# Identify which repos were modified (from chunks)
-MODIFIED_REPOS=$(jq -r '.chunks[].repo // empty' "$CHUNKS_FILE" 2>/dev/null | sort -u || echo "")
-if [[ -z "$MODIFIED_REPOS" ]]; then
-  MODIFIED_REPOS="$REPOS"  # Default to all if not specified
-fi
 
 # Build repo-specific test info
 REPO_TEST_INFO=""
 for repo in $MODIFIED_REPOS; do
   if [[ "$repo" == "both" ]]; then
-    continue  # Will handle both repos individually
+    continue
   fi
-
   REPO_PATH="$PROJECT_ROOT/$repo"
   if [[ -d "$REPO_PATH" ]]; then
-    # Find test directory pattern
     if [[ -d "$REPO_PATH/tests" ]]; then
       TEST_DIR="$REPO_PATH/tests/sprint"
     elif [[ -d "$REPO_PATH/test" ]]; then
       TEST_DIR="$REPO_PATH/test/sprint"
-    elif [[ -d "$REPO_PATH/__tests__" ]]; then
-      TEST_DIR="$REPO_PATH/__tests__/sprint"
     else
-      TEST_DIR="$REPO_PATH/tests/sprint"  # Default
+      TEST_DIR="$REPO_PATH/tests/sprint"
     fi
 
     REPO_TEST_INFO+="
 ### $repo
 - Test directory: \`$TEST_DIR\`
 - Test file: \`$TEST_DIR/sprint_${SPRINT_NUM}.spec.ts\`
-- Run command: \`cd $repo && yarn test\` (or project-specific)
+- Run command: \`cd $repo && yarn test\`
 "
   fi
 done
@@ -91,11 +175,9 @@ $(head -40 "$test_file")
   done
 done
 
-# Load prompt template
 PROMPT_TEMPLATE=$(cat "$SCRIPT_DIR/prompts/test.md")
 
-# Build full prompt
-FULL_PROMPT=$(cat <<EOF
+FULL_PROMPT=$(cat <<EOF_PROMPT
 $PROMPT_TEMPLATE
 
 ## Sprint: $SPRINT_NAME
@@ -121,48 +203,139 @@ $CHUNKS_CONTENT
 $EXISTING_TESTS
 
 ## Output Instructions:
-1. Create test files in EACH modified repo:
-   - API tests: \`api/tests/sprint/sprint_${SPRINT_NUM}.spec.ts\`
-   - Frontend tests: \`frontend/tests/sprint/sprint_${SPRINT_NUM}.spec.ts\` (if applicable)
+1. Create test files in EACH modified repo
 2. Add test scripts to each repo's package.json if needed
 3. Run tests in each repo to verify they pass
 4. If tests fail, debug and fix (up to 3 attempts per repo)
 5. If tests STILL fail: create $FAILURE_REPORT with details
 6. Do NOT commit failing tests
 7. Do NOT add "Generated with" or "Co-Authored-By" lines
-8. Commit passing tests to each repo:
-   - \`cd api && git add -A && git commit -m "test(sprint-$SPRINT_NUM): add sprint tests"\`
-   - \`cd frontend && git add -A && git commit -m "test(sprint-$SPRINT_NUM): add sprint tests"\`
-EOF
+8. Commit passing tests to each repo separately
+9. Emit <promise>RALPH_CHUNK_COMPLETE</promise> only when this chunk is complete
+EOF_PROMPT
 )
 
-# Run Claude for test generation
-echo "Running Claude for test suite generation..."
-cd "$PROJECT_ROOT" && claude --dangerously-skip-permissions -p "$FULL_PROMPT" \
-  --output-format=stream-json --include-partial-messages --verbose 2>&1 \
-  | tee "$TEST_LOG" \
-  | python3 "$SCRIPT_DIR/format-stream.py" || {
-  echo "WARNING: Claude test generation exited with non-zero status"
-}
+# ── Phase 1: generate_tests ───────────────────────────────
+if phase_is_complete "$PHASE_GENERATE"; then
+  echo "[phase:$PHASE_GENERATE] already complete; skipping"
+else
+  update_phase "$PHASE_GENERATE" "running"
+  log_event "test_phase" "running" "$PHASE_GENERATE"
 
-# Check outcomes
-echo ""
-echo "=========================================="
+  set +e
+  cd "$PROJECT_ROOT" && claude --dangerously-skip-permissions -p "$FULL_PROMPT" \
+    --output-format=stream-json --include-partial-messages --verbose 2>&1 \
+    | tee "$TEST_LOG" \
+    | python3 "$SCRIPT_DIR/format-stream.py"
+  GENERATE_EXIT=$?
+  set -e
 
-if [[ -f "$FAILURE_REPORT" ]]; then
-  echo "TEST GENERATION INCOMPLETE"
-  echo "=========================================="
-  echo ""
-  echo "Agent could not get all tests passing."
-  echo "Failure report created: $FAILURE_REPORT"
-  echo ""
-  head -20 "$FAILURE_REPORT"
-  echo ""
-  echo "Please review the failure report and investigate manually."
-  exit 3
+  if [[ "$GENERATE_EXIT" -ne 0 ]]; then
+    update_phase "$PHASE_GENERATE" "failed" "claude_exit_$GENERATE_EXIT"
+    log_event "test_phase" "failed" "$PHASE_GENERATE claude_exit=$GENERATE_EXIT"
+    exit "$EXIT_VALIDATION"
+  fi
+
+  if [[ -f "$FAILURE_REPORT" ]]; then
+    update_phase "$PHASE_GENERATE" "failed" "failure_report_created"
+    log_event "test_phase" "failed" "$PHASE_GENERATE failure_report_created"
+    echo "TEST GENERATION INCOMPLETE"
+    echo "Failure report created: $FAILURE_REPORT"
+    head -20 "$FAILURE_REPORT" || true
+    exit "$EXIT_VALIDATION"
+  fi
+
+  update_phase "$PHASE_GENERATE" "done"
+  log_event "test_phase" "ok" "$PHASE_GENERATE"
 fi
 
-echo "TEST GENERATION COMPLETE"
+# ── Phase 2: verify_backend_tests ─────────────────────────
+if phase_is_complete "$PHASE_VERIFY"; then
+  echo "[phase:$PHASE_VERIFY] already complete; skipping"
+else
+  update_phase "$PHASE_VERIFY" "running"
+  log_event "test_phase" "running" "$PHASE_VERIFY"
+
+  VERIFY_FAILED=false
+  for repo in $MODIFIED_REPOS; do
+    if [[ "$repo" == "both" ]] || [[ "$repo" == "frontend" ]]; then
+      continue
+    fi
+    REPO_PATH="$PROJECT_ROOT/$repo"
+    if jq -e --arg key "test:sprint-$SPRINT_NUM" '.scripts[$key]' "$REPO_PATH/package.json" >/dev/null 2>&1; then
+      set +e
+      run_monitored_command \
+        "backend-tests:$repo:sprint-$SPRINT_NUM" \
+        "$VERIFY_LOG" \
+        "$BACKEND_TEST_IDLE_TIMEOUT_SEC" \
+        bash -lc "cd '$REPO_PATH' && yarn test:sprint-$SPRINT_NUM"
+      VERIFY_EXIT=$?
+      set -e
+
+      if [[ "$VERIFY_EXIT" -ne 0 ]]; then
+        VERIFY_FAILED=true
+        update_phase "$PHASE_VERIFY" "failed" "backend_tests_failed_$repo"
+        log_event "test_phase" "failed" "$PHASE_VERIFY repo=$repo exit=$VERIFY_EXIT"
+      fi
+    fi
+  done
+
+  if [[ "$VERIFY_FAILED" == "true" ]]; then
+    exit "$EXIT_VALIDATION"
+  fi
+
+  update_phase "$PHASE_VERIFY" "done"
+  log_event "test_phase" "ok" "$PHASE_VERIFY"
+fi
+
+# ── Phase 3: run_e2e ──────────────────────────────────────
+IS_FRONTEND=false
+for repo in $MODIFIED_REPOS; do
+  if [[ "$repo" == "frontend" ]] || [[ "$repo" == "both" ]]; then
+    IS_FRONTEND=true
+    break
+  fi
+done
+
+if [[ "$IS_FRONTEND" != "true" ]]; then
+  update_phase "$PHASE_E2E" "skipped" "not_applicable"
+  log_event "test_phase" "skipped" "$PHASE_E2E not_applicable"
+else
+  if phase_is_complete "$PHASE_E2E"; then
+    echo "[phase:$PHASE_E2E] already complete; skipping"
+  else
+    update_phase "$PHASE_E2E" "running"
+    log_event "test_phase" "running" "$PHASE_E2E"
+
+    if ! command -v npx >/dev/null 2>&1; then
+      update_phase "$PHASE_E2E" "failed" "missing_npx"
+      log_event "test_phase" "failed" "$PHASE_E2E missing_npx"
+      exit "$EXIT_DEP_MISSING"
+    fi
+
+    set +e
+    run_monitored_command \
+      "playwright-e2e" \
+      "$E2E_LOG" \
+      "$E2E_IDLE_TIMEOUT_SEC" \
+      bash -lc "cd '$PROJECT_ROOT/frontend' && npx playwright test"
+    E2E_EXIT=$?
+    set -e
+
+    if [[ "$E2E_EXIT" -ne 0 ]]; then
+      update_phase "$PHASE_E2E" "failed" "e2e_failed"
+      log_event "test_phase" "failed" "$PHASE_E2E e2e_failed exit=$E2E_EXIT"
+      exit "$EXIT_VALIDATION"
+    fi
+
+    update_phase "$PHASE_E2E" "done"
+    log_event "test_phase" "ok" "$PHASE_E2E"
+  fi
+fi
+
+echo ""
+echo "=========================================="
+echo "TEST SUITE COMPLETE"
 echo "=========================================="
 echo ""
 echo "Run tests manually to verify:"
@@ -171,4 +344,6 @@ for repo in $MODIFIED_REPOS; do
     echo "  cd $PROJECT_ROOT/$repo && yarn test"
   fi
 done
-exit 0
+
+log_event "test" "ok" "all phases complete"
+exit "$EXIT_OK"

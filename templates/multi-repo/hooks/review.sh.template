@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Code Review Hook (Multi-Repo) - Uses Codex for autonomous code review
-# Aggregates diffs from all repos, instructs agent to review each
+# Code Review Hook (Multi-Repo) - Uses Codex for autonomous code review.
 
 set -euo pipefail
 
@@ -11,15 +10,36 @@ MANIFEST="$SPRINT_DIR/manifest.json"
 REVIEW_FILE="$SPRINT_DIR/REVIEW.md"
 REVIEW_LOG="$SPRINT_DIR/review.log"
 
-# Load config for REPOS
+source "$SCRIPT_DIR/lib/ralph-common.sh"
 source "$SCRIPT_DIR/config.env"
 REPOS="${REPOS:-api frontend}"
 
-# Validate manifest exists
+EVENT_LOG="${RALPH_EVENT_LOG:-$SPRINT_DIR/hooks.events.jsonl}"
+EXIT_DEP_MISSING=12
+EXIT_VALIDATION=14
+
+log_event() {
+  append_event "$EVENT_LOG" "$1" "$2" "$3"
+}
+
+preflight() {
+  local missing
+  missing=$(require_commands jq codex python3 git || true)
+  if [[ -n "$missing" ]]; then
+    echo "$missing" | tee -a "$REVIEW_LOG"
+    log_event "review" "failed" "dependency_missing: $missing"
+    return "$EXIT_DEP_MISSING"
+  fi
+  return 0
+}
+
 if [[ ! -f "$MANIFEST" ]]; then
   echo "ERROR: Manifest not found: $MANIFEST"
-  exit 1
+  log_event "review" "failed" "manifest_missing"
+  exit "$EXIT_VALIDATION"
 fi
+
+preflight || exit $?
 
 SPRINT_NAME=$(jq -r '.sprint' "$MANIFEST")
 
@@ -42,23 +62,22 @@ done
 
 if [[ -z "$REPO_COMMIT_INFO" ]]; then
   echo "ERROR: No valid commit ranges found in manifest"
-  exit 1
+  log_event "review" "failed" "no_commit_ranges"
+  exit "$EXIT_VALIDATION"
 fi
 
 echo "Reviewing commits across repos: $REPOS"
+log_event "review" "running" "repos=$REPOS"
 
-# Get chunks content
 CHUNKS_FILE="$SPRINT_DIR/chunks.json"
 CHUNKS_CONTENT=""
 if [[ -f "$CHUNKS_FILE" ]]; then
   CHUNKS_CONTENT=$(cat "$CHUNKS_FILE")
 fi
 
-# Build review prompt
 REVIEW_PROMPT=$(cat "$SCRIPT_DIR/prompts/review.md")
 
-# Create the full prompt for multi-repo review
-FULL_PROMPT=$(cat <<EOF
+FULL_PROMPT=$(cat <<EOF_PROMPT
 $REVIEW_PROMPT
 
 ## Sprint: $SPRINT_NAME
@@ -88,21 +107,29 @@ $CHUNKS_CONTENT
    - \`cd api && git add -A && git commit -m "fix(review): apply review fixes"\`
    - \`cd frontend && git add -A && git commit -m "fix(review): apply review fixes"\`
 8. Do NOT add "Generated with" or "Co-Authored-By" lines to commits
-EOF
+EOF_PROMPT
 )
 
-# Run Codex review from project root
 echo "Running Codex code review..."
+set +e
 cd "$PROJECT_ROOT" && codex exec --yolo --json "$FULL_PROMPT" 2>&1 \
   | tee "$REVIEW_LOG" \
-  | python3 "$SCRIPT_DIR/format-codex-stream.py" || {
+  | python3 "$SCRIPT_DIR/format-codex-stream.py"
+REVIEW_EXIT=$?
+set -e
+
+if [[ "$REVIEW_EXIT" -ne 0 ]]; then
   echo "WARNING: Codex review exited with non-zero status"
   echo "Check log: $REVIEW_LOG"
-}
+  log_event "review" "failed" "codex_exit=$REVIEW_EXIT"
+else
+  log_event "review" "ok" "codex_exit=0"
+fi
 
-# Check if review was created
 if [[ -f "$REVIEW_FILE" ]]; then
   echo "Review complete: $REVIEW_FILE"
 else
   echo "WARNING: Review file not created at $REVIEW_FILE"
 fi
+
+exit "$REVIEW_EXIT"

@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Documentation Update Hook (Multi-Repo) - Hybrid Approach
-# 1. Creates sprint summary in .ralph/sprints/
-# 2. Updates CLAUDE.md in each modified repo
+# Documentation Update Hook (Multi-Repo) - Hybrid approach.
 
 set -euo pipefail
 
@@ -10,18 +8,39 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MANIFEST="$SPRINT_DIR/manifest.json"
 
-# Load config for REPOS
+source "$SCRIPT_DIR/lib/ralph-common.sh"
 source "$SCRIPT_DIR/config.env"
 REPOS="${REPOS:-api frontend}"
 
-# Validate manifest exists
+EVENT_LOG="${RALPH_EVENT_LOG:-$SPRINT_DIR/hooks.events.jsonl}"
+EXIT_DEP_MISSING=12
+EXIT_VALIDATION=14
+
+log_event() {
+  append_event "$EVENT_LOG" "$1" "$2" "$3"
+}
+
+preflight() {
+  local missing
+  missing=$(require_commands jq claude || true)
+  if [[ -n "$missing" ]]; then
+    echo "$missing"
+    log_event "document" "failed" "dependency_missing: $missing"
+    return "$EXIT_DEP_MISSING"
+  fi
+  return 0
+}
+
 if [[ ! -f "$MANIFEST" ]]; then
   echo "ERROR: Manifest not found: $MANIFEST"
-  exit 1
+  log_event "document" "failed" "manifest_missing"
+  exit "$EXIT_VALIDATION"
 fi
 
+preflight || exit $?
+
 SPRINT_NAME=$(jq -r '.sprint' "$MANIFEST")
-SPRINT_NUM=$(echo "$SPRINT_NAME" | grep -oE '^[0-9]+')
+SPRINT_NUM=$(echo "$SPRINT_NAME" | grep -oE '^[0-9]+' || echo "")
 DOC_LOG="$SPRINT_DIR/document.log"
 
 # Sprint summary goes in the sprint folder itself (no global docs in parent)
@@ -30,17 +49,15 @@ SPRINT_DOC_FILE="$SPRINT_DIR/SUMMARY.md"
 echo "Updating documentation for sprint: $SPRINT_NAME"
 echo "Sprint summary: $SPRINT_DOC_FILE"
 echo "Repos: $REPOS"
+log_event "document" "running" "start sprint=$SPRINT_NAME"
 
-# Gather context
 CHUNKS_FILE="$SPRINT_DIR/chunks.json"
 CHUNKS_CONTENT=""
 if [[ -f "$CHUNKS_FILE" ]]; then
   CHUNKS_CONTENT=$(cat "$CHUNKS_FILE")
 fi
 
-# Get commits from manifest (per-repo format)
 COMMITS=""
-COMMIT_DATA=$(jq -r '.commits[] | "Iteration \(.iteration): chunk \(.chunk_id)"' "$MANIFEST" 2>/dev/null || echo "")
 for repo in $REPOS; do
   REPO_COMMITS=$(jq -r ".commits[].repos.$repo // empty" "$MANIFEST" 2>/dev/null | grep -v null | head -5)
   if [[ -n "$REPO_COMMITS" ]]; then
@@ -51,13 +68,11 @@ $REPO_COMMITS
   fi
 done
 
-# Identify modified repos from chunks
 MODIFIED_REPOS=$(jq -r '.chunks[].repo // empty' "$CHUNKS_FILE" 2>/dev/null | sort -u || echo "")
 if [[ -z "$MODIFIED_REPOS" ]]; then
   MODIFIED_REPOS="$REPOS"
 fi
 
-# Get artifact info organized by repo
 ARTIFACT_INFO=""
 for repo in $MODIFIED_REPOS; do
   if [[ "$repo" == "both" ]]; then
@@ -74,7 +89,6 @@ $REPO_ARTIFACTS
   fi
 done
 
-# List each repo's CLAUDE.md for context
 REPO_DOCS=""
 for repo in $REPOS; do
   CLAUDE_MD="$PROJECT_ROOT/$repo/CLAUDE.md"
@@ -88,11 +102,9 @@ $(head -50 "$CLAUDE_MD")
   fi
 done
 
-# Load prompt template
 PROMPT_TEMPLATE=$(cat "$SCRIPT_DIR/prompts/document.md")
 
-# Build full prompt
-FULL_PROMPT=$(cat <<EOF
+FULL_PROMPT=$(cat <<EOF_PROMPT
 $PROMPT_TEMPLATE
 
 ## Sprint: $SPRINT_NAME (Sprint $SPRINT_NUM)
@@ -131,16 +143,21 @@ $REPO_DOCS
 4. Commit to each repo that was updated:
    - \`cd api && git add -A && git commit -m "docs: update for sprint $SPRINT_NUM"\`
    - \`cd frontend && git add -A && git commit -m "docs: update for sprint $SPRINT_NUM"\`
-EOF
+EOF_PROMPT
 )
 
-# Run Claude for documentation updates
-echo "Running Claude for documentation updates..."
-cd "$PROJECT_ROOT" && claude --dangerously-skip-permissions -p "$FULL_PROMPT" 2>&1 | tee "$DOC_LOG" || {
-  echo "WARNING: Claude documentation generation exited with non-zero status"
-}
+set +e
+cd "$PROJECT_ROOT" && claude --dangerously-skip-permissions -p "$FULL_PROMPT" 2>&1 | tee "$DOC_LOG"
+DOC_EXIT=$?
+set -e
 
-# Check results
+if [[ "$DOC_EXIT" -ne 0 ]]; then
+  echo "WARNING: Claude documentation generation exited with non-zero status"
+  log_event "document" "failed" "claude_exit=$DOC_EXIT"
+else
+  log_event "document" "ok" "claude_exit=0"
+fi
+
 echo ""
 if [[ -f "$SPRINT_DOC_FILE" ]]; then
   echo "Sprint summary created: $SPRINT_DOC_FILE"
@@ -149,3 +166,4 @@ else
 fi
 
 echo "Documentation update complete. See $DOC_LOG for details."
+exit "$DOC_EXIT"

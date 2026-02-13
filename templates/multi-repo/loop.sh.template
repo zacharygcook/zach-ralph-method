@@ -4,24 +4,44 @@
 
 set -euo pipefail
 
-# Load config
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.env"
+source "$SCRIPT_DIR/lib/ralph-common.sh"
 
 # Project root is parent of .ralph/
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Defaults
 MAX_ITERATIONS="${MAX_ITERATIONS:-30}"
 AGENT="${AGENT:-claude}"
 CURRENT_SPRINT="${CURRENT_SPRINT:-}"
 REPOS="${REPOS:-api frontend}"
 PRIMARY_REPO="${PRIMARY_REPO:-api}"
+HEARTBEAT_SEC="${HEARTBEAT_SEC:-30}"
+AGENT_IDLE_TIMEOUT_SEC="${AGENT_IDLE_TIMEOUT_SEC:-0}"
+RALPH_INTERACTIVE="${RALPH_INTERACTIVE:-false}"
+RALPH_INTERACTIVE_TIMEOUT_SEC="${RALPH_INTERACTIVE_TIMEOUT_SEC:-20}"
+
+# ── CLI Flags ──────────────────────────────────────────────
+RESUME=false
+FORCE_HOOKS=false
+for arg in "$@"; do
+  case "$arg" in
+    --resume) RESUME=true ;;
+    --force-hooks) FORCE_HOOKS=true ;;
+    *)
+      echo "Unknown option: $arg"
+      echo "Usage: ./loop.sh [--resume] [--force-hooks]"
+      exit 1
+      ;;
+  esac
+done
+
+# ── Sprint Validation ─────────────────────────────────────
 SPRINT_DIR="$SCRIPT_DIR/sprints/$CURRENT_SPRINT"
 PROMPT_FILE="$SPRINT_DIR/prompt.md"
 CHUNKS_FILE="$SPRINT_DIR/chunks.json"
+MANIFEST_FILE="$SPRINT_DIR/manifest.json"
 
-# Validate sprint exists
 if [[ -z "$CURRENT_SPRINT" ]] || [[ ! -d "$SPRINT_DIR" ]]; then
   echo "Error: CURRENT_SPRINT not set or sprint folder not found"
   echo "Set CURRENT_SPRINT in config.env (e.g., CURRENT_SPRINT=1-scaffold-foundation)"
@@ -37,22 +57,76 @@ for repo in $REPOS; do
   fi
 done
 
-# Create timestamped log directory for this run
+# ── Run Setup ──────────────────────────────────────────────
 RUN_ID=$(date +%Y%m%d-%H%M%S)
 LOG_DIR="$SCRIPT_DIR/logs/$CURRENT_SPRINT/run-$RUN_ID"
 mkdir -p "$LOG_DIR"
 
-# Manifest file for tracking commits
-MANIFEST_FILE="$SPRINT_DIR/manifest.json"
-START_TIME=$(date -Iseconds)
+START_TIME=$(now_iso)
+ORCHESTRATOR_LOG="$LOG_DIR/orchestrator.log"
+EVENT_LOG="$LOG_DIR/events.jsonl"
 
-# Get start commit for a repo
+log_orchestrator() {
+  local msg="$1"
+  local ts
+  ts=$(now_iso)
+  echo "[$ts] $msg" | tee -a "$ORCHESTRATOR_LOG"
+}
+
+log_event() {
+  append_event "$EVENT_LOG" "$1" "$2" "$3"
+}
+
+# ── Multi-Repo Helpers ─────────────────────────────────────
 get_repo_commit() {
   local repo="$1"
   cd "$PROJECT_ROOT/$repo" && git rev-parse HEAD 2>/dev/null || echo "unknown"
 }
 
-# Initialize manifest if sprint just starting
+backup_commit_all_repos() {
+  local msg="$1"
+  for repo in $REPOS; do
+    cd "$PROJECT_ROOT/$repo"
+    git add -A
+    git commit -m "$msg" -q 2>/dev/null || true
+  done
+}
+
+get_all_repo_commits() {
+  local result="{"
+  local first=true
+  for repo in $REPOS; do
+    local commit
+    commit=$(get_repo_commit "$repo")
+    if [[ "$first" == "true" ]]; then
+      first=false
+    else
+      result+=","
+    fi
+    result+="\"$repo\":\"$commit\""
+  done
+  result+="}"
+  echo "$result"
+}
+
+finalize_manifest_repos() {
+  local end_time
+  end_time=$(now_iso)
+  for repo in $REPOS; do
+    local end_commit
+    end_commit=$(get_repo_commit "$repo")
+    manifest_update \
+      --arg repo "$repo" --arg commit "$end_commit" \
+      '.repos[$repo].end_commit = $commit' || true
+  done
+  manifest_update \
+    --arg time "$end_time" \
+    '.completed_at = $time | .phase = "chunks_done"' || true
+  log_orchestrator "manifest_updated: phase=chunks_done"
+  log_event "manifest" "ok" "phase=chunks_done"
+}
+
+# ── Manifest Initialization ───────────────────────────────
 if [[ ! -f "$MANIFEST_FILE" ]] || ! jq -e '.repos' "$MANIFEST_FILE" >/dev/null 2>&1; then
   # Build repos object with start commits
   REPOS_JSON="{"
@@ -68,73 +142,175 @@ if [[ ! -f "$MANIFEST_FILE" ]] || ! jq -e '.repos' "$MANIFEST_FILE" >/dev/null 2
   done
   REPOS_JSON+="}"
 
-  cat > "$MANIFEST_FILE" << EOF
+  cat > "$MANIFEST_FILE" <<EOF_MANIFEST
 {
   "sprint": "$CURRENT_SPRINT",
   "started_at": "$START_TIME",
   "completed_at": null,
   "iterations": 0,
   "repos": $REPOS_JSON,
-  "commits": []
+  "commits": [],
+  "phase": "running",
+  "hooks": {
+    "review": {"status": "pending", "completed_at": null, "reason": null},
+    "documentation": {"status": "pending", "completed_at": null, "reason": null},
+    "tests": {
+      "status": "pending",
+      "completed_at": null,
+      "reason": null,
+      "phases": {
+        "generate_tests": {"status": "pending", "completed_at": null, "reason": null},
+        "verify_backend_tests": {"status": "pending", "completed_at": null, "reason": null},
+        "run_e2e": {"status": "pending", "completed_at": null, "reason": null}
+      }
+    }
+  }
 }
-EOF
+EOF_MANIFEST
 fi
 
-# Check if all chunks pass
-all_chunks_pass() {
-  ! grep -q '"passes": false' "$CHUNKS_FILE"
+# Normalize manifest schema for older manifests
+ensure_manifest_schema() {
+  manifest_update_locked "$MANIFEST_FILE" '
+    .phase = (.phase // "running")
+    | .hooks = (.hooks // {})
+    | .hooks.review = (.hooks.review // {"status":"pending","completed_at":null,"reason":null})
+    | .hooks.documentation = (.hooks.documentation // {"status":"pending","completed_at":null,"reason":null})
+    | .hooks.tests = (.hooks.tests // {"status":"pending","completed_at":null,"reason":null,"phases":{}})
+    | .hooks.tests.phases = (.hooks.tests.phases // {})
+    | .hooks.tests.phases.generate_tests = (.hooks.tests.phases.generate_tests // {"status":"pending","completed_at":null,"reason":null})
+    | .hooks.tests.phases.verify_backend_tests = (.hooks.tests.phases.verify_backend_tests // {"status":"pending","completed_at":null,"reason":null})
+    | .hooks.tests.phases.run_e2e = (.hooks.tests.phases.run_e2e // {"status":"pending","completed_at":null,"reason":null})
+  ' || {
+    log_orchestrator "ERROR: Failed to normalize manifest schema"
+    return 1
+  }
 }
 
-# Get next sprint name (increment number prefix)
+manifest_update() {
+  manifest_update_locked "$MANIFEST_FILE" "$@" || {
+    log_orchestrator "ERROR: Manifest update failed"
+    return 1
+  }
+}
+
+# ── Chunk State ────────────────────────────────────────────
+all_chunks_pass_fn() {
+  all_chunks_pass "$CHUNKS_FILE"
+}
+
+passed_chunk_count() {
+  count_passed_chunks "$CHUNKS_FILE"
+}
+
+# ── Next Sprint ────────────────────────────────────────────
 get_next_sprint() {
-  local current_num=$(echo "$CURRENT_SPRINT" | grep -oE '^[0-9]+')
-  local next_num=$((current_num + 1))
+  local current_num next_num
+  current_num=$(echo "$CURRENT_SPRINT" | grep -oE '^[0-9]+' || echo "")
+  [[ -z "$current_num" ]] && return 0
+  next_num=$((current_num + 1))
   ls "$SCRIPT_DIR/sprints/" 2>/dev/null | grep "^${next_num}-" | head -1
 }
 
-# Backup commits in all repos
-backup_commit_all_repos() {
-  local msg="$1"
-  for repo in $REPOS; do
-    cd "$PROJECT_ROOT/$repo"
-    git add -A
-    git commit -m "$msg" -q 2>/dev/null || true
-  done
-}
+offer_next_sprint_prompt() {
+  local next_sprint="$1"
 
-# Get current commits for all repos as JSON object
-get_all_repo_commits() {
-  local result="{"
-  local first=true
-  for repo in $REPOS; do
-    local commit=$(get_repo_commit "$repo")
-    if [[ "$first" == "true" ]]; then
-      first=false
+  echo ""
+  echo "Next sprint available: $next_sprint"
+  echo "To start: Update CURRENT_SPRINT=$next_sprint in config.env and run ./loop.sh"
+  echo ""
+
+  if [[ "$RALPH_INTERACTIVE" == "true" ]] && [[ -t 0 ]]; then
+    if read -r -t "$RALPH_INTERACTIVE_TIMEOUT_SEC" -p "Auto-update config and continue? [y/N] " REPLY; then
+      echo
+      if [[ $REPLY =~ ^[Yy]$ ]]; then
+        sed -i "s/^CURRENT_SPRINT=.*/CURRENT_SPRINT=$next_sprint/" "$SCRIPT_DIR/config.env"
+        echo "Updated CURRENT_SPRINT to $next_sprint"
+        echo "Run ./loop.sh again to start."
+      fi
     else
-      result+=","
+      echo
+      echo "Skipping prompt after timeout (${RALPH_INTERACTIVE_TIMEOUT_SEC}s)."
     fi
-    result+="\"$repo\":\"$commit\""
-  done
-  result+="}"
-  echo "$result"
+  fi
 }
 
-# Finalize manifest with end commits
-finalize_manifest() {
-  local end_time=$(date -Iseconds)
-  for repo in $REPOS; do
-    local end_commit=$(get_repo_commit "$repo")
-    jq --arg repo "$repo" --arg commit "$end_commit" \
-      '.repos[$repo].end_commit = $commit' \
-      "$MANIFEST_FILE" > "$MANIFEST_FILE.tmp" && mv "$MANIFEST_FILE.tmp" "$MANIFEST_FILE"
-  done
-  jq --arg time "$end_time" '.completed_at = $time' \
-    "$MANIFEST_FILE" > "$MANIFEST_FILE.tmp" && mv "$MANIFEST_FILE.tmp" "$MANIFEST_FILE"
+# ── Post-Sprint Hooks ─────────────────────────────────────
+hooks_completed() {
+  [[ "$(jq -r '.phase // ""' "$MANIFEST_FILE" 2>/dev/null || echo "")" == "hooks_done" ]]
 }
 
-# Agent command builders
+mark_hooks_phase_done() {
+  local now
+  now=$(now_iso)
+  manifest_update --arg now "$now" '.phase = "hooks_done"' || return 1
+  log_orchestrator "manifest_updated: phase=hooks_done"
+  log_event "manifest" "ok" "phase=hooks_done"
+}
+
+run_post_sprint_hooks() {
+  if [[ ! -x "$SCRIPT_DIR/hooks/post-sprint.sh" ]]; then
+    log_orchestrator "hooks_missing: $SCRIPT_DIR/hooks/post-sprint.sh"
+    return 1
+  fi
+
+  log_orchestrator "hooks_started"
+  log_event "hooks" "running" "post-sprint start"
+
+  if RALPH_EVENT_LOG="$EVENT_LOG" RALPH_FORCE_HOOKS="$([[ "$FORCE_HOOKS" == "true" ]] && echo 1 || echo 0)" \
+    "$SCRIPT_DIR/hooks/post-sprint.sh" "$SPRINT_DIR"; then
+    log_orchestrator "hooks_finished: success"
+    log_event "hooks" "ok" "post-sprint success"
+  else
+    log_orchestrator "hooks_finished: partial_or_failed"
+    log_event "hooks" "failed" "post-sprint partial_or_failed"
+    return 1
+  fi
+}
+
+# ── Reconciliation ─────────────────────────────────────────
+RECONCILIATION_DONE=false
+reconcile_completion_state() {
+  if [[ "$RECONCILIATION_DONE" == "true" ]]; then
+    return 0
+  fi
+  RECONCILIATION_DONE=true
+
+  ensure_manifest_schema || true
+
+  if ! all_chunks_pass_fn; then
+    log_orchestrator "reconcile_skip: chunks_incomplete"
+    log_event "reconcile" "skipped" "chunks_incomplete"
+    return 0
+  fi
+
+  if [[ "$(jq -r '.completed_at // "null"' "$MANIFEST_FILE" 2>/dev/null || echo "null")" == "null" ]]; then
+    finalize_manifest_repos || true
+  fi
+
+  if hooks_completed && [[ "$FORCE_HOOKS" != "true" ]]; then
+    log_orchestrator "reconcile_skip: hooks_already_done"
+    log_event "reconcile" "skipped" "hooks_already_done"
+    return 0
+  fi
+
+  echo ""
+  echo "Running post-sprint hooks..."
+  run_post_sprint_hooks || true
+
+  if [[ -f "$SPRINT_DIR/.hook-review.done" ]] && [[ -f "$SPRINT_DIR/.hook-documentation.done" ]] && [[ -f "$SPRINT_DIR/.hook-tests.done" ]]; then
+    mark_hooks_phase_done || true
+  fi
+}
+
+# ── Signal Traps ───────────────────────────────────────────
+trap 'log_orchestrator "signal_received: INT"; log_event "signal" "int" "INT received"; reconcile_completion_state; exit 130' INT
+trap 'log_orchestrator "signal_received: TERM"; log_event "signal" "term" "TERM received"; reconcile_completion_state; exit 143' TERM
+trap 'reconcile_completion_state' EXIT
+
+# ── Agent Commands ─────────────────────────────────────────
 run_claude() {
-  cd "$PROJECT_ROOT"  # Run from project root for multi-repo access
+  cd "$PROJECT_ROOT"
   claude --dangerously-skip-permissions -p "$(cat "$PROMPT_FILE")" \
     --output-format=stream-json --include-partial-messages --verbose 2>&1 \
     | tee "$LOG_FILE" \
@@ -150,54 +326,73 @@ run_codex() {
 
 run_amp() {
   cd "$PROJECT_ROOT"
-  amp run --autonomous --prompt-file "$PROMPT_FILE" 2>&1
+  amp run --autonomous --prompt-file "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
 }
 
 run_opencode() {
   cd "$PROJECT_ROOT"
-  opencode --auto --prompt "$PROMPT_FILE" 2>&1
+  opencode --auto --prompt "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
 }
 
 run_droid() {
   cd "$PROJECT_ROOT"
-  droid exec --auto high -f "$PROMPT_FILE" 2>&1
+  droid exec --auto high -f "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
 }
 
-# Main loop
+run_agent_iteration() {
+  case "$AGENT" in
+    claude) run_claude ;;
+    codex) run_codex ;;
+    amp) run_amp ;;
+    opencode) run_opencode ;;
+    droid) run_droid ;;
+    *)
+      echo "Unknown agent: $AGENT"
+      return 12
+      ;;
+  esac
+}
+
+run_agent_with_watchdog() {
+  (
+    run_agent_iteration
+  ) &
+  local agent_pid=$!
+
+  monitor_process_with_heartbeat \
+    "$agent_pid" \
+    "agent iteration=$CURRENT_ITERATION agent=$AGENT" \
+    "$LOG_FILE" \
+    "$HEARTBEAT_SEC" \
+    "$AGENT_IDLE_TIMEOUT_SEC" \
+    "$EVENT_LOG"
+  return $?
+}
+
+# ── Main Loop ──────────────────────────────────────────────
 echo "Starting Ralph loop (multi-repo): agent=$AGENT, max=$MAX_ITERATIONS"
 echo "Sprint: $CURRENT_SPRINT"
 echo "Repos: $REPOS"
 echo "Project root: $PROJECT_ROOT"
 echo "Logs: $LOG_DIR"
 echo "---"
+log_orchestrator "loop_started: agent=$AGENT sprint=$CURRENT_SPRINT repos=$REPOS max_iterations=$MAX_ITERATIONS resume=$RESUME force_hooks=$FORCE_HOOKS"
+log_event "loop" "started" "agent=$AGENT sprint=$CURRENT_SPRINT"
 
-# Pre-check: if all chunks already pass, skip agent and go straight to hooks
-if all_chunks_pass; then
+ensure_manifest_schema
+
+# Pre-check: all chunks already done
+if all_chunks_pass_fn; then
   echo "All chunks already complete! Skipping to post-sprint hooks..."
   echo ""
+  log_orchestrator "precheck: all_chunks_pass=true"
+  log_event "precheck" "ok" "all_chunks_pass=true"
 
-  finalize_manifest
-
-  if [[ -x "$SCRIPT_DIR/hooks/post-sprint.sh" ]]; then
-    echo "Running post-sprint hooks..."
-    "$SCRIPT_DIR/hooks/post-sprint.sh" "$SPRINT_DIR"
-  fi
+  reconcile_completion_state
 
   NEXT_SPRINT=$(get_next_sprint)
   if [[ -n "$NEXT_SPRINT" ]]; then
-    echo ""
-    echo "Next sprint available: $NEXT_SPRINT"
-    echo "To start: Update CURRENT_SPRINT=$NEXT_SPRINT in config.env and run ./loop.sh"
-    echo ""
-    if [[ -t 0 ]]; then
-      read -p "Auto-update config and continue? [y/N] " -n 1 -r
-      echo
-      if [[ $REPLY =~ ^[Yy]$ ]]; then
-        sed -i "s/^CURRENT_SPRINT=.*/CURRENT_SPRINT=$NEXT_SPRINT/" "$SCRIPT_DIR/config.env"
-        echo "Updated CURRENT_SPRINT to $NEXT_SPRINT"
-        echo "Run ./loop.sh again to start."
-      fi
-    fi
+    offer_next_sprint_prompt "$NEXT_SPRINT"
   else
     echo "No next sprint found. Create one with /ralph-sprint"
   fi
@@ -205,72 +400,93 @@ if all_chunks_pass; then
   exit 0
 fi
 
-for i in $(seq 1 "$MAX_ITERATIONS"); do
+# Resume support
+START_ITERATION=1
+if [[ "$RESUME" == "true" ]]; then
+  LAST_ITER=$(jq -r '.iterations // 0' "$MANIFEST_FILE" 2>/dev/null || echo 0)
+  if [[ "$LAST_ITER" =~ ^[0-9]+$ ]] && (( LAST_ITER >= 1 )); then
+    START_ITERATION=$((LAST_ITER + 1))
+  fi
+  if (( START_ITERATION > MAX_ITERATIONS )); then
+    START_ITERATION=$MAX_ITERATIONS
+  fi
+fi
+
+for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
+  CURRENT_ITERATION="$i"
   echo "[Iteration $i/$MAX_ITERATIONS]"
+  log_orchestrator "iteration_started: $i"
+  log_event "iteration" "started" "iteration=$i"
 
   LOG_FILE="$LOG_DIR/iteration-$i.log"
   SUMMARY_LOG="$LOG_DIR/iteration-$i.summary.log"
   export SUMMARY_LOG
 
-  # Run agent (allow non-zero exit - we check log for completion signals)
-  case "$AGENT" in
-    claude)   run_claude || true ;;
-    codex)    run_codex || true ;;
-    amp)      run_amp | tee "$LOG_FILE" || true ;;
-    opencode) run_opencode | tee "$LOG_FILE" || true ;;
-    droid)    run_droid | tee "$LOG_FILE" || true ;;
-    *) echo "Unknown agent: $AGENT"; exit 1 ;;
-  esac
+  BEFORE_PASS_COUNT=$(passed_chunk_count)
 
-  # Check for chunk completion
-  if grep -q "RALPH_COMPLETE" "$LOG_FILE"; then
+  set +e
+  run_agent_with_watchdog
+  AGENT_EXIT=$?
+  set -e
+
+  log_orchestrator "agent_done: iteration=$i log=$LOG_FILE exit=$AGENT_EXIT"
+  log_event "iteration" "agent_done" "iteration=$i exit=$AGENT_EXIT"
+
+  # ── State-Delta Completion Validation ──────────────────
+  AFTER_PASS_COUNT=$(passed_chunk_count)
+  PASS_DELTA=$((AFTER_PASS_COUNT - BEFORE_PASS_COUNT))
+
+  COMPLETION_SCOPE=$(detect_completion_scope "$LOG_FILE")
+  COMPLETION_SIGNAL=false
+
+  if all_chunks_pass_fn; then
+    COMPLETION_SIGNAL=true
+    log_orchestrator "completion_signal_detected: iteration=$i source=chunks_state"
+  elif [[ "$COMPLETION_SCOPE" == "sprint" ]]; then
+    COMPLETION_SIGNAL=true
+    log_orchestrator "completion_signal_detected: iteration=$i source=marker scope=sprint"
+  elif [[ "$COMPLETION_SCOPE" == "chunk" ]] || [[ "$COMPLETION_SCOPE" == "legacy_chunk" ]]; then
+    if (( PASS_DELTA > 0 )); then
+      COMPLETION_SIGNAL=true
+      log_orchestrator "completion_signal_detected: iteration=$i source=marker scope=$COMPLETION_SCOPE delta=$PASS_DELTA"
+    else
+      log_orchestrator "completion_signal_ignored: iteration=$i source=marker scope=$COMPLETION_SCOPE delta=$PASS_DELTA"
+      log_event "completion" "ignored" "iteration=$i scope=$COMPLETION_SCOPE delta=$PASS_DELTA"
+    fi
+  fi
+
+  if [[ "$COMPLETION_SIGNAL" == "true" ]]; then
     echo ""
     echo "=========================================="
     echo "Chunk completed in iteration $i"
     echo "=========================================="
 
-    # Backup commit in all repos (no-op if agent already committed)
+    # Backup commit in all repos
     backup_commit_all_repos "ralph: chunk completed (iteration $i)"
 
-    # Record commits in manifest
     REPO_COMMITS=$(get_all_repo_commits)
-    CHUNK_ID=$(jq '[.chunks[] | select(.passes == true)] | length' "$CHUNKS_FILE" 2>/dev/null || echo "0")
-    jq --argjson commits "$REPO_COMMITS" --argjson chunk "$CHUNK_ID" --argjson iter "$i" \
+    CHUNK_ID="$AFTER_PASS_COUNT"
+    manifest_update \
+      --argjson commits "$REPO_COMMITS" --argjson chunk "$CHUNK_ID" --argjson iter "$i" \
       '.commits += [{"chunk_id": $chunk, "iteration": $iter, "repos": $commits}] | .iterations = $iter' \
-      "$MANIFEST_FILE" > "$MANIFEST_FILE.tmp" && mv "$MANIFEST_FILE.tmp" "$MANIFEST_FILE"
+      || true
 
-    # Check if ALL chunks now pass
-    if all_chunks_pass; then
+    if all_chunks_pass_fn; then
       echo "All chunks complete! Sprint finished."
       echo ""
+      log_orchestrator "sprint_chunks_complete: iteration=$i"
+      log_event "sprint" "chunks_done" "iteration=$i"
 
-      finalize_manifest
-
-      if [[ -x "$SCRIPT_DIR/hooks/post-sprint.sh" ]]; then
-        echo ""
-        echo "Running post-sprint hooks..."
-        "$SCRIPT_DIR/hooks/post-sprint.sh" "$SPRINT_DIR"
-      fi
+      reconcile_completion_state
 
       NEXT_SPRINT=$(get_next_sprint)
       if [[ -n "$NEXT_SPRINT" ]]; then
-        echo ""
-        echo "Next sprint available: $NEXT_SPRINT"
-        echo "To start: Update CURRENT_SPRINT=$NEXT_SPRINT in config.env and run ./loop.sh"
-        echo ""
-        if [[ -t 0 ]]; then
-          read -p "Auto-update config and continue? [y/N] " -n 1 -r
-          echo
-          if [[ $REPLY =~ ^[Yy]$ ]]; then
-            sed -i "s/^CURRENT_SPRINT=.*/CURRENT_SPRINT=$NEXT_SPRINT/" "$SCRIPT_DIR/config.env"
-            echo "Updated CURRENT_SPRINT to $NEXT_SPRINT"
-            echo "Run ./loop.sh again to start."
-          fi
-        fi
+        offer_next_sprint_prompt "$NEXT_SPRINT"
       else
         echo "No next sprint found. Create one with /ralph-sprint"
       fi
 
+      trap - EXIT
       exit 0
     fi
 
@@ -283,15 +499,23 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
   if grep -q "<blocked>" "$LOG_FILE"; then
     REASON=$(grep -oP '(?<=<blocked>).*(?=</blocked>)' "$LOG_FILE" || echo "unknown")
     echo "Agent blocked: $REASON"
-    exit 1
+    log_orchestrator "blocked: iteration=$i reason=$REASON"
+    log_event "iteration" "blocked" "iteration=$i reason=$REASON"
+    exit 14
   fi
+
+  manifest_update --argjson iter "$i" '.iterations = (if (.iterations // 0) < $iter then $iter else .iterations end)' || true
 
   # Backup commit for incomplete iterations
   backup_commit_all_repos "ralph: iteration $i"
 
   echo "Iteration $i complete, continuing..."
+  log_orchestrator "iteration_complete: $i"
+  log_event "iteration" "complete" "iteration=$i"
   sleep 2
 done
 
 echo "Max iterations ($MAX_ITERATIONS) reached without completion"
+log_orchestrator "max_iterations_reached: $MAX_ITERATIONS"
+log_event "loop" "max_iterations_reached" "max=$MAX_ITERATIONS"
 exit 2

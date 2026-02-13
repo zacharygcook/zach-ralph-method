@@ -9,7 +9,7 @@
 5. Find the first chunk where `passes: false`
 6. Complete that chunk's acceptance criteria
 7. Update chunks.json: set `"passes": true` for the completed chunk
-8. Output: `<promise>RALPH_COMPLETE</promise>`
+8. Output: `<promise>RALPH_CHUNK_COMPLETE</promise>`
 
 ## Reference Patterns
 
@@ -26,10 +26,14 @@
 When current chunk's acceptance criteria are ALL verified:
 1. Edit `.ralph/sprints/[SPRINT_FOLDER]/chunks.json` - set `"passes": true` for this chunk
 2. Git commit your work with a descriptive message (e.g., "Add user authentication models")
-3. Output exactly: `<promise>RALPH_COMPLETE</promise>`
+3. Output exactly: `<promise>RALPH_CHUNK_COMPLETE</promise>`
+
+**Completion markers** (use the right scope):
+- `RALPH_CHUNK_COMPLETE` - Current chunk is done (normal case)
+- `RALPH_SPRINT_COMPLETE` - ALL chunks are done, sprint is finished
 
 **Git commit rules**:
-- Commit after completing the chunk, before RALPH_COMPLETE
+- Commit after completing the chunk, before the completion marker
 - Use a clean, descriptive message (no "Generated with Claude" or "Co-Authored-By")
 - Stage all relevant files: `git add -A && git commit -m "Your message"`
 
