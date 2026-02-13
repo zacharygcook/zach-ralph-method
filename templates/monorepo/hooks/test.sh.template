@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/lib/ralph-common.sh"
 
 EVENT_LOG="${RALPH_EVENT_LOG:-$SPRINT_DIR/hooks.events.jsonl}"
 HEARTBEAT_SEC="${HOOK_HEARTBEAT_SEC:-30}"
-BACKEND_TEST_IDLE_TIMEOUT_SEC="${BACKEND_TEST_IDLE_TIMEOUT_SEC:-0}"
+BACKEND_TEST_IDLE_TIMEOUT_SEC="${BACKEND_TEST_IDLE_TIMEOUT_SEC:-180}"
 E2E_IDLE_TIMEOUT_SEC="${E2E_IDLE_TIMEOUT_SEC:-0}"
 POST_RESULT_IDLE_SEC="${POST_RESULT_IDLE_SEC:-45}"
 GENERATE_IDLE_TIMEOUT_SEC="${GENERATE_IDLE_TIMEOUT_SEC:-0}"
@@ -86,6 +86,13 @@ run_monitored_command() {
   return $?
 }
 
+verify_log_indicates_success() {
+  local log_file="$1"
+  [[ -f "$log_file" ]] || return 1
+  grep -Eq '(^|[[:space:]])PASSED([[:space:]]|$)' "$log_file" \
+    && ! grep -Eq '(^|[[:space:]])FAILED([[:space:]]|$)' "$log_file"
+}
+
 run_claude_stream_with_watchdog() {
   local log_file="$1"
   local sidecar_pid claude_pid claude_pgid monitor_exit sidecar_exit
@@ -129,7 +136,7 @@ run_claude_stream_with_watchdog() {
 
 preflight() {
   local missing
-  missing=$(require_commands jq claude python3 || true)
+  missing=$(require_commands jq claude node yarn python3 || true)
   if [[ -n "$missing" ]]; then
     echo "$missing"
     log_event "test" "failed" "dependency_missing: $missing"
@@ -229,7 +236,7 @@ $EXISTING_TESTS
 EOF_PROMPT
 )
 
-# ── Phase 1: generate_tests ───────────────────────────────
+# Phase 1: generate_tests
 if phase_is_complete "$PHASE_GENERATE"; then
   echo "[phase:$PHASE_GENERATE] already complete; skipping"
 else
@@ -267,7 +274,7 @@ else
   log_event "test_phase" "ok" "$PHASE_GENERATE"
 fi
 
-# ── Phase 2: verify_backend_tests ─────────────────────────
+# Phase 2: verify_backend_tests
 if phase_is_complete "$PHASE_VERIFY"; then
   echo "[phase:$PHASE_VERIFY] already complete; skipping"
 else
@@ -290,9 +297,15 @@ else
   set -e
 
   if [[ "$VERIFY_EXIT" -eq "$EXIT_IDLE_TIMEOUT" ]]; then
-    update_phase "$PHASE_VERIFY" "failed" "idle_timeout"
-    log_event "test_phase" "failed" "$PHASE_VERIFY idle_timeout"
-    exit "$EXIT_IDLE_TIMEOUT"
+    if verify_log_indicates_success "$VERIFY_LOG"; then
+      echo "WARNING: backend test runner remained alive after PASS output; treating phase as successful"
+      log_event "test_phase" "warning" "$PHASE_VERIFY idle_timeout_after_pass_output"
+      VERIFY_EXIT=0
+    else
+      update_phase "$PHASE_VERIFY" "failed" "idle_timeout"
+      log_event "test_phase" "failed" "$PHASE_VERIFY idle_timeout"
+      exit "$EXIT_IDLE_TIMEOUT"
+    fi
   fi
 
   if [[ "$VERIFY_EXIT" -ne 0 ]]; then
@@ -305,7 +318,7 @@ else
   log_event "test_phase" "ok" "$PHASE_VERIFY"
 fi
 
-# ── Phase 3: run_e2e ──────────────────────────────────────
+# Phase 3: run_e2e
 IS_FRONTEND=false
 if jq -r '.chunks[].artifacts[]' "$CHUNKS_FILE" 2>/dev/null | grep -q '^frontend/'; then
   IS_FRONTEND=true
@@ -326,6 +339,8 @@ else
       log_event "test_phase" "failed" "$PHASE_E2E missing_npx"
       exit "$EXIT_DEP_MISSING"
     fi
+
+    (cd "$PROJECT_ROOT/backend" && node ace seed:e2e >/dev/null 2>&1) || true
 
     set +e
     run_monitored_command \

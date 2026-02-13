@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Ralph status summary for current sprint.
-# Usage: .ralph/status.sh [sprint-name]
 
 set -euo pipefail
 
@@ -25,7 +24,6 @@ fi
 echo "Sprint: $SPRINT"
 echo "Directory: $SPRINT_DIR"
 
-# Manifest info
 if [[ -f "$MANIFEST" ]]; then
   echo "Manifest phase: $(jq -r '.phase // "unknown"' "$MANIFEST")"
   echo "Iterations: $(jq -r '.iterations // 0' "$MANIFEST")"
@@ -40,7 +38,6 @@ else
   echo "Manifest: (missing)"
 fi
 
-# Latest run info
 LATEST_RUN=$(ls -1dt "$SCRIPT_DIR/logs/$SPRINT"/run-* 2>/dev/null | head -1 || true)
 if [[ -n "$LATEST_RUN" ]]; then
   echo "Latest run: $LATEST_RUN"
@@ -65,9 +62,11 @@ else
   echo "Latest run: (none)"
 fi
 
-# Hook state files
 for hook in review documentation tests; do
   state_file="$SPRINT_DIR/.hook-${hook}.state.json"
+  if [[ ! -f "$state_file" ]] && [[ -n "${LATEST_RUN:-}" ]]; then
+    state_file="$LATEST_RUN/hook-runtime/.hook-${hook}.state.json"
+  fi
   if [[ -f "$state_file" ]]; then
     pid=$(jq -r '.pid // ""' "$state_file")
     status=$(jq -r '.status // "unknown"' "$state_file")

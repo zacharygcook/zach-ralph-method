@@ -16,7 +16,6 @@ POST_RESULT_IDLE_SEC="${POST_RESULT_IDLE_SEC:-45}"
 RALPH_INTERACTIVE="${RALPH_INTERACTIVE:-false}"
 RALPH_INTERACTIVE_TIMEOUT_SEC="${RALPH_INTERACTIVE_TIMEOUT_SEC:-20}"
 
-# ── CLI Flags ──────────────────────────────────────────────
 RESUME=false
 FORCE_HOOKS=false
 for arg in "$@"; do
@@ -31,7 +30,6 @@ for arg in "$@"; do
   esac
 done
 
-# ── Sprint Validation ─────────────────────────────────────
 SPRINT_DIR="$SCRIPT_DIR/sprints/$CURRENT_SPRINT"
 PROMPT_FILE="$SPRINT_DIR/prompt.md"
 CHUNKS_FILE="$SPRINT_DIR/chunks.json"
@@ -43,7 +41,6 @@ if [[ -z "$CURRENT_SPRINT" ]] || [[ ! -d "$SPRINT_DIR" ]]; then
   exit 1
 fi
 
-# ── Run Setup ──────────────────────────────────────────────
 RUN_ID=$(date +%Y%m%d-%H%M%S)
 LOG_DIR="$SCRIPT_DIR/logs/$CURRENT_SPRINT/run-$RUN_ID"
 mkdir -p "$LOG_DIR"
@@ -64,7 +61,6 @@ log_event() {
   append_event "$EVENT_LOG" "$1" "$2" "$3"
 }
 
-# ── Manifest Initialization ───────────────────────────────
 if [[ ! -f "$MANIFEST_FILE" ]] || ! jq -e '.start_commit' "$MANIFEST_FILE" >/dev/null 2>&1; then
   cat > "$MANIFEST_FILE" <<EOF_MANIFEST
 {
@@ -94,7 +90,6 @@ if [[ ! -f "$MANIFEST_FILE" ]] || ! jq -e '.start_commit' "$MANIFEST_FILE" >/dev
 EOF_MANIFEST
 fi
 
-# Normalize manifest schema for older manifests missing new fields
 ensure_manifest_schema() {
   manifest_update_locked "$MANIFEST_FILE" '
     .phase = (.phase // "running")
@@ -120,7 +115,6 @@ manifest_update() {
   }
 }
 
-# ── Manifest Helpers ───────────────────────────────────────
 finalize_manifest_chunks_done() {
   local end_commit end_time
   end_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
@@ -154,7 +148,6 @@ mark_hooks_phase_done() {
   log_event "manifest" "ok" "phase=hooks_done"
 }
 
-# ── Chunk State ────────────────────────────────────────────
 all_chunks_pass_fn() {
   all_chunks_pass "$CHUNKS_FILE"
 }
@@ -163,7 +156,6 @@ passed_chunk_count() {
   count_passed_chunks "$CHUNKS_FILE"
 }
 
-# ── Next Sprint ────────────────────────────────────────────
 get_next_sprint() {
   local current_num next_num
   current_num=$(echo "$CURRENT_SPRINT" | grep -oE '^[0-9]+' || echo "")
@@ -195,7 +187,6 @@ offer_next_sprint_prompt() {
   fi
 }
 
-# ── Post-Sprint Hooks ─────────────────────────────────────
 run_post_sprint_hooks() {
   if [[ ! -x "$SCRIPT_DIR/hooks/post-sprint.sh" ]]; then
     log_orchestrator "hooks_missing: $SCRIPT_DIR/hooks/post-sprint.sh"
@@ -216,8 +207,6 @@ run_post_sprint_hooks() {
   fi
 }
 
-# ── Reconciliation ─────────────────────────────────────────
-# Called on exit/signal to finalize manifest and run hooks if chunks are done.
 RECONCILIATION_DONE=false
 reconcile_completion_state() {
   if [[ "$RECONCILIATION_DONE" == "true" ]]; then
@@ -247,17 +236,15 @@ reconcile_completion_state() {
   echo "Running post-sprint hooks..."
   run_post_sprint_hooks || true
 
-  if [[ -f "$SPRINT_DIR/.hook-review.done" ]] && [[ -f "$SPRINT_DIR/.hook-documentation.done" ]] && [[ -f "$SPRINT_DIR/.hook-tests.done" ]]; then
+  if jq -e '.hooks.review.status == "done" and .hooks.documentation.status == "done" and .hooks.tests.status == "done"' "$MANIFEST_FILE" >/dev/null 2>&1; then
     mark_hooks_phase_done || true
   fi
 }
 
-# ── Signal Traps ───────────────────────────────────────────
 trap 'log_orchestrator "signal_received: INT"; log_event "signal" "int" "INT received"; reconcile_completion_state; exit 130' INT
 trap 'log_orchestrator "signal_received: TERM"; log_event "signal" "term" "TERM received"; reconcile_completion_state; exit 143' TERM
 trap 'reconcile_completion_state' EXIT
 
-# ── Agent Commands ─────────────────────────────────────────
 start_stream_sidecar() {
   local formatter_path="${1:-}"
   touch "$LOG_FILE"
@@ -371,7 +358,6 @@ run_agent_with_watchdog() {
   return "$agent_exit"
 }
 
-# ── Main Loop ──────────────────────────────────────────────
 echo "Starting Ralph loop: agent=$AGENT, max=$MAX_ITERATIONS"
 echo "Sprint: $CURRENT_SPRINT"
 echo "Logs: $LOG_DIR"
@@ -381,7 +367,6 @@ log_event "loop" "started" "agent=$AGENT sprint=$CURRENT_SPRINT"
 
 ensure_manifest_schema
 
-# Pre-check: all chunks already done
 if all_chunks_pass_fn; then
   echo "All chunks already complete! Skipping to post-sprint hooks..."
   echo ""
@@ -400,7 +385,6 @@ if all_chunks_pass_fn; then
   exit 0
 fi
 
-# Resume support: pick up from last completed iteration
 START_ITERATION=1
 if [[ "$RESUME" == "true" ]]; then
   LAST_ITER=$(jq -r '.iterations // 0' "$MANIFEST_FILE" 2>/dev/null || echo 0)
@@ -432,7 +416,6 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
   log_orchestrator "agent_done: iteration=$i log=$LOG_FILE exit=$AGENT_EXIT"
   log_event "iteration" "agent_done" "iteration=$i exit=$AGENT_EXIT"
 
-  # ── State-Delta Completion Validation ──────────────────
   AFTER_PASS_COUNT=$(passed_chunk_count)
   PASS_DELTA=$((AFTER_PASS_COUNT - BEFORE_PASS_COUNT))
 
@@ -461,7 +444,6 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
     echo "Chunk completed in iteration $i"
     echo "=========================================="
 
-    # Backup commit (no-op if agent already committed)
     if git rev-parse --git-dir >/dev/null 2>&1; then
       git add -A
       git commit -m "ralph: chunk completed (iteration $i)" -q 2>/dev/null || true
@@ -499,7 +481,6 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
     continue
   fi
 
-  # Check for blocked
   if grep -q "<blocked>" "$LOG_FILE"; then
     REASON=$(grep -oP '(?<=<blocked>).*(?=</blocked>)' "$LOG_FILE" || echo "unknown")
     echo "Agent blocked: $REASON"
@@ -510,7 +491,6 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
 
   manifest_update --argjson iter "$i" '.iterations = (if (.iterations // 0) < $iter then $iter else .iterations end)' || true
 
-  # Backup commit for incomplete iterations
   if git rev-parse --git-dir >/dev/null 2>&1; then
     git add -A
     git commit -m "ralph: iteration $i" --allow-empty -q 2>/dev/null || true

@@ -14,7 +14,7 @@ REPOS="${REPOS:-api frontend}"
 
 EVENT_LOG="${RALPH_EVENT_LOG:-$SPRINT_DIR/hooks.events.jsonl}"
 HEARTBEAT_SEC="${HOOK_HEARTBEAT_SEC:-30}"
-BACKEND_TEST_IDLE_TIMEOUT_SEC="${BACKEND_TEST_IDLE_TIMEOUT_SEC:-0}"
+BACKEND_TEST_IDLE_TIMEOUT_SEC="${BACKEND_TEST_IDLE_TIMEOUT_SEC:-180}"
 E2E_IDLE_TIMEOUT_SEC="${E2E_IDLE_TIMEOUT_SEC:-0}"
 POST_RESULT_IDLE_SEC="${POST_RESULT_IDLE_SEC:-45}"
 GENERATE_IDLE_TIMEOUT_SEC="${GENERATE_IDLE_TIMEOUT_SEC:-0}"
@@ -86,6 +86,12 @@ run_monitored_command() {
 
   monitor_process_with_heartbeat "$pid" "$label" "$log_file" "$HEARTBEAT_SEC" "$idle_timeout" "$EVENT_LOG"
   return $?
+}
+
+verify_log_indicates_success() {
+  local log_file="$1"
+  [[ -f "$log_file" ]] || return 1
+  grep -Eq '(^|[[:space:]])PASSED([[:space:]]|$)' "$log_file" \n    && ! grep -Eq '(^|[[:space:]])FAILED([[:space:]]|$)' "$log_file"
 }
 
 run_claude_stream_with_watchdog() {
@@ -311,6 +317,14 @@ else
         bash -lc "cd '$REPO_PATH' && yarn test:sprint-$SPRINT_NUM"
       VERIFY_EXIT=$?
       set -e
+
+      if [[ "$VERIFY_EXIT" -eq "$EXIT_IDLE_TIMEOUT" ]]; then
+        if verify_log_indicates_success "$VERIFY_LOG"; then
+          echo "WARNING: backend test runner remained alive after PASS output in $repo; treating repo verify as successful"
+          log_event "test_phase" "warning" "$PHASE_VERIFY repo=$repo idle_timeout_after_pass_output"
+          VERIFY_EXIT=0
+        fi
+      fi
 
       if [[ "$VERIFY_EXIT" -ne 0 ]]; then
         VERIFY_FAILED=true

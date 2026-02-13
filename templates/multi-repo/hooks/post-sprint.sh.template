@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Post-Sprint Hook Orchestrator (Multi-Repo)
+# Post-Sprint Hook Orchestrator
 # Runs all post-sprint automation: review, docs, tests
-# Features: lock-protected manifest, state files, stale recovery, heartbeat monitoring
 
 set -euo pipefail
 
@@ -24,6 +23,26 @@ EXIT_IDLE_TIMEOUT=11
 EXIT_DEP_MISSING=12
 EXIT_INTERRUPTED=13
 EXIT_VALIDATION=14
+
+if [[ -n "${RALPH_HOOK_RUNTIME_DIR:-}" ]]; then
+  HOOK_RUNTIME_DIR="$RALPH_HOOK_RUNTIME_DIR"
+elif [[ "$EVENT_LOG" == "$RALPH_DIR"/logs/*/events.jsonl ]]; then
+  HOOK_RUNTIME_DIR="$(dirname "$EVENT_LOG")/hook-runtime"
+else
+  HOOK_RUNTIME_DIR="$RALPH_DIR/logs/$SPRINT_NAME/run-manual-$(date +%Y%m%d-%H%M%S)/hook-runtime"
+fi
+mkdir -p "$HOOK_RUNTIME_DIR"
+
+declare -A FINAL_HOOK_STATUS=(
+  [review]="pending"
+  [documentation]="pending"
+  [tests]="pending"
+)
+declare -A FINAL_HOOK_REASON=(
+  [review]="null"
+  [documentation]="null"
+  [tests]="null"
+)
 
 log_event() {
   append_event "$EVENT_LOG" "$1" "$2" "$3"
@@ -64,12 +83,32 @@ set_manifest_phase() {
 
 hook_state_file() {
   local hook_key="$1"
-  echo "$SPRINT_DIR/.hook-${hook_key}.state.json"
+  echo "$HOOK_RUNTIME_DIR/.hook-${hook_key}.state.json"
 }
 
 hook_lock_file() {
   local hook_key="$1"
-  echo "$SPRINT_DIR/.hook-${hook_key}.lock"
+  echo "$HOOK_RUNTIME_DIR/.hook-${hook_key}.lock"
+}
+
+manifest_hook_status() {
+  local hook_key="$1"
+  jq -r --arg key "$hook_key" '.hooks[$key].status // "pending"' "$MANIFEST" 2>/dev/null || echo "pending"
+}
+
+record_hook_result() {
+  local hook_key="$1"
+  local status="$2"
+  local reason="${3:-null}"
+  FINAL_HOOK_STATUS["$hook_key"]="$status"
+  FINAL_HOOK_REASON["$hook_key"]="$reason"
+}
+
+persist_hook_results() {
+  local hook_key
+  for hook_key in review documentation tests; do
+    update_manifest_hook "$hook_key" "${FINAL_HOOK_STATUS[$hook_key]}" "${FINAL_HOOK_REASON[$hook_key]}"
+  done
 }
 
 read_hook_pid_from_state() {
@@ -79,14 +118,10 @@ read_hook_pid_from_state() {
 
 recover_stale_hook_state() {
   local hook_key="$1"
-  local marker="$SPRINT_DIR/.hook-$hook_key.done"
-  local state_file lock_file pid status
+  local state_file lock_file pid
   state_file=$(hook_state_file "$hook_key")
   lock_file=$(hook_lock_file "$hook_key")
-
-  status=$(jq -r --arg key "$hook_key" '.hooks[$key].status // "pending"' "$MANIFEST" 2>/dev/null || echo "pending")
-  [[ "$status" == "running" ]] || return 0
-  [[ -f "$marker" ]] && return 0
+  [[ -f "$lock_file" || -f "$state_file" ]] || return 0
 
   if [[ -f "$state_file" ]]; then
     pid=$(read_hook_pid_from_state "$state_file")
@@ -96,7 +131,6 @@ recover_stale_hook_state() {
   fi
 
   rm -f "$lock_file" "$state_file"
-  update_manifest_hook "$hook_key" "failed" "failed_stale"
   log_event "hook" "failed_stale" "Recovered stale running state for $hook_key"
 }
 
@@ -120,16 +154,16 @@ run_hook() {
   local script_path="$4"
   local hook_log="$5"
 
-  local marker state_file lock_file pid exit_code reason
-  marker="$SPRINT_DIR/.hook-$hook_key.done"
+  local state_file lock_file pid exit_code reason prior_status
   state_file=$(hook_state_file "$hook_key")
   lock_file=$(hook_lock_file "$hook_key")
 
   recover_stale_hook_state "$hook_key"
 
-  if [[ "$FORCE_HOOKS" != "1" ]] && [[ -f "$marker" ]]; then
+  prior_status=$(manifest_hook_status "$hook_key")
+  if [[ "$FORCE_HOOKS" != "1" ]] && [[ "$prior_status" == "done" ]]; then
     echo "[$ordinal] Skipping $label (already completed)"
-    update_manifest_hook "$hook_key" "done"
+    record_hook_result "$hook_key" "done" "null"
     log_event "hook" "skipped" "$hook_key already completed"
     echo ""
     return 0
@@ -137,7 +171,7 @@ run_hook() {
 
   if [[ ! -x "$script_path" ]]; then
     echo "[$ordinal] Skipping $label ($(basename "$script_path") not found)"
-    update_manifest_hook "$hook_key" "failed" "missing_script"
+    record_hook_result "$hook_key" "failed" "missing_script"
     log_event "hook" "failed" "$hook_key missing script"
     echo ""
     return "$EXIT_DEP_MISSING"
@@ -148,6 +182,7 @@ run_hook() {
       pid=$(read_hook_pid_from_state "$state_file")
       if [[ -n "$pid" ]] && process_alive "$pid"; then
         echo "[$ordinal] Skipping $label (already running: pid=$pid)"
+        record_hook_result "$hook_key" "failed" "interrupted"
         log_event "hook" "running" "$hook_key already running pid=$pid"
         echo ""
         return "$EXIT_INTERRUPTED"
@@ -157,7 +192,7 @@ run_hook() {
   fi
 
   echo "[$ordinal] Running $label..."
-  update_manifest_hook "$hook_key" "running"
+  record_hook_result "$hook_key" "running" "null"
   log_event "hook" "running" "$hook_key started"
 
   : > "$lock_file"
@@ -188,8 +223,7 @@ run_hook() {
   rm -f "$lock_file"
 
   if [[ "$exit_code" -eq 0 ]]; then
-    touch "$marker"
-    update_manifest_hook "$hook_key" "done"
+    record_hook_result "$hook_key" "done" "null"
     jq -nc --arg hook "$hook_key" --arg ts "$(now_iso)" --argjson pid "$pid" \
       '{hook:$hook,status:"done",pid:$pid,completed_at:$ts,last_heartbeat:$ts}' > "$state_file" 2>/dev/null || true
     log_event "hook" "ok" "$hook_key completed"
@@ -197,7 +231,7 @@ run_hook() {
     return 0
   fi
 
-  update_manifest_hook "$hook_key" "failed" "$reason"
+  record_hook_result "$hook_key" "failed" "$reason"
   jq -nc --arg hook "$hook_key" --arg ts "$(now_iso)" --argjson pid "$pid" --arg reason "$reason" \
     '{hook:$hook,status:"failed",pid:$pid,failed_at:$ts,reason:$reason,last_heartbeat:$ts}' > "$state_file" 2>/dev/null || true
   log_event "hook" "failed" "$hook_key failed reason=$reason exit=$exit_code"
@@ -217,16 +251,16 @@ if [[ ! -f "$MANIFEST" ]]; then
   exit "$EXIT_VALIDATION"
 fi
 
-set_manifest_phase "chunks_done"
-
 HOOK_FAILURES=0
-run_hook "1/3" "code review" "review" "$SCRIPT_DIR/review.sh" "$SPRINT_DIR/review.log" || HOOK_FAILURES=$((HOOK_FAILURES + 1))
-run_hook "2/3" "documentation generation" "documentation" "$SCRIPT_DIR/document.sh" "$SPRINT_DIR/document.log" || HOOK_FAILURES=$((HOOK_FAILURES + 1))
-run_hook "3/3" "test suite creation" "tests" "$SCRIPT_DIR/test.sh" "$SPRINT_DIR/test.log" || HOOK_FAILURES=$((HOOK_FAILURES + 1))
+run_hook "1/3" "code review" "review" "$SCRIPT_DIR/review.sh" "$HOOK_RUNTIME_DIR/review.hook.log" || HOOK_FAILURES=$((HOOK_FAILURES + 1))
+run_hook "2/3" "documentation generation" "documentation" "$SCRIPT_DIR/document.sh" "$HOOK_RUNTIME_DIR/document.hook.log" || HOOK_FAILURES=$((HOOK_FAILURES + 1))
+run_hook "3/3" "test suite creation" "tests" "$SCRIPT_DIR/test.sh" "$HOOK_RUNTIME_DIR/test.hook.log" || HOOK_FAILURES=$((HOOK_FAILURES + 1))
 
 echo "========================================"
 echo "Post-sprint hooks complete!"
 echo "========================================"
+
+persist_hook_results
 
 if [[ "$HOOK_FAILURES" -eq 0 ]]; then
   set_manifest_phase "hooks_done"

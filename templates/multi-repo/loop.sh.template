@@ -299,7 +299,7 @@ reconcile_completion_state() {
   echo "Running post-sprint hooks..."
   run_post_sprint_hooks || true
 
-  if [[ -f "$SPRINT_DIR/.hook-review.done" ]] && [[ -f "$SPRINT_DIR/.hook-documentation.done" ]] && [[ -f "$SPRINT_DIR/.hook-tests.done" ]]; then
+  if jq -e '.hooks.review.status == "done" and .hooks.documentation.status == "done" and .hooks.tests.status == "done"' "$MANIFEST_FILE" >/dev/null 2>&1; then
     mark_hooks_phase_done || true
   fi
 }

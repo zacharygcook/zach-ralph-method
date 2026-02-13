@@ -80,6 +80,9 @@ fi
 # Hook state files
 for hook in review documentation tests; do
   state_file="$SPRINT_DIR/.hook-${hook}.state.json"
+  if [[ ! -f "$state_file" ]] && [[ -n "${LATEST_RUN:-}" ]]; then
+    state_file="$LATEST_RUN/hook-runtime/.hook-${hook}.state.json"
+  fi
   if [[ -f "$state_file" ]]; then
     pid=$(jq -r '.pid // ""' "$state_file")
     status=$(jq -r '.status // "unknown"' "$state_file")
