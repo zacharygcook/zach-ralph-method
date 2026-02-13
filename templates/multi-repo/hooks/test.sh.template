@@ -16,6 +16,8 @@ EVENT_LOG="${RALPH_EVENT_LOG:-$SPRINT_DIR/hooks.events.jsonl}"
 HEARTBEAT_SEC="${HOOK_HEARTBEAT_SEC:-30}"
 BACKEND_TEST_IDLE_TIMEOUT_SEC="${BACKEND_TEST_IDLE_TIMEOUT_SEC:-0}"
 E2E_IDLE_TIMEOUT_SEC="${E2E_IDLE_TIMEOUT_SEC:-0}"
+POST_RESULT_IDLE_SEC="${POST_RESULT_IDLE_SEC:-45}"
+GENERATE_IDLE_TIMEOUT_SEC="${GENERATE_IDLE_TIMEOUT_SEC:-0}"
 
 EXIT_OK=0
 EXIT_TIMEOUT=10
@@ -84,6 +86,47 @@ run_monitored_command() {
 
   monitor_process_with_heartbeat "$pid" "$label" "$log_file" "$HEARTBEAT_SEC" "$idle_timeout" "$EVENT_LOG"
   return $?
+}
+
+run_claude_stream_with_watchdog() {
+  local log_file="$1"
+  local sidecar_pid claude_pid claude_pgid monitor_exit sidecar_exit
+
+  : > "$log_file"
+  (
+    tail -n +1 -f "$log_file" 2>/dev/null | python3 "$SCRIPT_DIR/format-stream.py"
+  ) &
+  sidecar_pid=$!
+
+  cd "$PROJECT_ROOT" && claude --dangerously-skip-permissions -p "$FULL_PROMPT" \
+    --output-format=stream-json --include-partial-messages --verbose >"$log_file" 2>&1 &
+  claude_pid=$!
+  claude_pgid=$(process_pgid "$claude_pid")
+
+  log_event "process" "spawned" "phase=$PHASE_GENERATE claude_pid=$claude_pid claude_pgid=${claude_pgid:-unknown} sidecar_pid=$sidecar_pid"
+
+  set +e
+  monitor_process_with_heartbeat \
+    "$claude_pid" \
+    "hook:test phase=$PHASE_GENERATE" \
+    "$log_file" \
+    "$HEARTBEAT_SEC" \
+    "$GENERATE_IDLE_TIMEOUT_SEC" \
+    "$EVENT_LOG" \
+    "" \
+    "$POST_RESULT_IDLE_SEC" \
+    "$claude_pid,$sidecar_pid"
+  monitor_exit=$?
+  set -e
+
+  kill_process_tree "$sidecar_pid"
+  set +e
+  wait "$sidecar_pid" 2>/dev/null
+  sidecar_exit=$?
+  set -e
+
+  log_event "process" "closed" "phase=$PHASE_GENERATE claude_pid=$claude_pid sidecar_pid=$sidecar_pid sidecar_exit=$sidecar_exit monitor_exit=$monitor_exit"
+  return "$monitor_exit"
 }
 
 preflight() {
@@ -223,10 +266,7 @@ else
   log_event "test_phase" "running" "$PHASE_GENERATE"
 
   set +e
-  cd "$PROJECT_ROOT" && claude --dangerously-skip-permissions -p "$FULL_PROMPT" \
-    --output-format=stream-json --include-partial-messages --verbose 2>&1 \
-    | tee "$TEST_LOG" \
-    | python3 "$SCRIPT_DIR/format-stream.py"
+  run_claude_stream_with_watchdog "$TEST_LOG"
   GENERATE_EXIT=$?
   set -e
 

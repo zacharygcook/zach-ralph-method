@@ -18,6 +18,32 @@ log_event() {
   append_event "$EVENT_LOG" "$1" "$2" "$3"
 }
 
+run_claude_with_live_log() {
+  local prompt="$1"
+  local log_file="$2"
+  local sidecar_pid claude_pid claude_exit sidecar_exit
+
+  : > "$log_file"
+  tail -n +1 -f "$log_file" 2>/dev/null &
+  sidecar_pid=$!
+
+  claude --dangerously-skip-permissions -p "$prompt" >"$log_file" 2>&1 &
+  claude_pid=$!
+
+  log_event "process" "spawned" "hook=document claude_pid=$claude_pid sidecar_pid=$sidecar_pid"
+
+  set +e
+  wait "$claude_pid"
+  claude_exit=$?
+  kill_process_tree "$sidecar_pid"
+  wait "$sidecar_pid" 2>/dev/null
+  sidecar_exit=$?
+  set -e
+
+  log_event "process" "closed" "hook=document claude_pid=$claude_pid sidecar_pid=$sidecar_pid sidecar_exit=$sidecar_exit claude_exit=$claude_exit"
+  return "$claude_exit"
+}
+
 preflight() {
   local missing
   missing=$(require_commands jq claude || true)
@@ -108,7 +134,7 @@ EOF_PROMPT
 )
 
 set +e
-claude --dangerously-skip-permissions -p "$FULL_PROMPT" 2>&1 | tee "$DOC_LOG"
+run_claude_with_live_log "$FULL_PROMPT" "$DOC_LOG"
 DOC_EXIT=$?
 set -e
 

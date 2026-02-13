@@ -12,6 +12,7 @@ AGENT="${AGENT:-claude}"
 CURRENT_SPRINT="${CURRENT_SPRINT:-}"
 HEARTBEAT_SEC="${HEARTBEAT_SEC:-30}"
 AGENT_IDLE_TIMEOUT_SEC="${AGENT_IDLE_TIMEOUT_SEC:-0}"
+POST_RESULT_IDLE_SEC="${POST_RESULT_IDLE_SEC:-45}"
 RALPH_INTERACTIVE="${RALPH_INTERACTIVE:-false}"
 RALPH_INTERACTIVE_TIMEOUT_SEC="${RALPH_INTERACTIVE_TIMEOUT_SEC:-20}"
 
@@ -257,60 +258,112 @@ trap 'log_orchestrator "signal_received: TERM"; log_event "signal" "term" "TERM 
 trap 'reconcile_completion_state' EXIT
 
 # ── Agent Commands ─────────────────────────────────────────
-run_claude() {
-  claude --dangerously-skip-permissions -p "$(cat "$PROMPT_FILE")" \
-    --output-format=stream-json --include-partial-messages --verbose 2>&1 \
-    | tee "$LOG_FILE" \
-    | python3 "$SCRIPT_DIR/format-stream.py"
+start_stream_sidecar() {
+  local formatter_path="${1:-}"
+  touch "$LOG_FILE"
+
+  if [[ -n "$formatter_path" ]]; then
+    (
+      tail -n +1 -f "$LOG_FILE" 2>/dev/null | python3 "$formatter_path"
+    ) &
+  else
+    (
+      tail -n +1 -f "$LOG_FILE" 2>/dev/null
+    ) &
+  fi
+
+  echo "$!"
 }
 
-run_codex() {
-  codex exec --yolo --json "$(cat "$PROMPT_FILE")" 2>&1 \
-    | tee "$LOG_FILE" \
-    | python3 "$SCRIPT_DIR/format-codex-stream.py"
+stop_stream_sidecar() {
+  local sidecar_pid="${1:-}"
+  [[ -z "$sidecar_pid" ]] && return 0
+
+  kill_process_tree "$sidecar_pid"
+  set +e
+  wait "$sidecar_pid" 2>/dev/null
+  local sidecar_exit=$?
+  set -e
+  return "$sidecar_exit"
 }
 
-run_amp() {
-  amp run --autonomous --prompt-file "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
-}
+start_agent_iteration() {
+  local formatter_path=""
+  local sidecar_pid agent_pid agent_pgid
+  : > "$LOG_FILE"
 
-run_opencode() {
-  opencode --auto --prompt "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
-}
-
-run_droid() {
-  droid exec --auto high -f "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE"
-}
-
-run_agent_iteration() {
   case "$AGENT" in
-    claude) run_claude ;;
-    codex) run_codex ;;
-    amp) run_amp ;;
-    opencode) run_opencode ;;
-    droid) run_droid ;;
+    claude)
+      formatter_path="$SCRIPT_DIR/format-stream.py"
+      ;;
+    codex)
+      formatter_path="$SCRIPT_DIR/format-codex-stream.py"
+      ;;
+    amp|opencode|droid)
+      formatter_path=""
+      ;;
     *)
       echo "Unknown agent: $AGENT"
       return 12
       ;;
   esac
+
+  sidecar_pid=$(start_stream_sidecar "$formatter_path")
+
+  case "$AGENT" in
+    claude)
+      claude --dangerously-skip-permissions -p "$(cat "$PROMPT_FILE")" \
+        --output-format=stream-json --include-partial-messages --verbose >"$LOG_FILE" 2>&1 &
+      ;;
+    codex)
+      codex exec --yolo --json "$(cat "$PROMPT_FILE")" >"$LOG_FILE" 2>&1 &
+      ;;
+    amp)
+      amp run --autonomous --prompt-file "$PROMPT_FILE" >"$LOG_FILE" 2>&1 &
+      ;;
+    opencode)
+      opencode --auto --prompt "$PROMPT_FILE" >"$LOG_FILE" 2>&1 &
+      ;;
+    droid)
+      droid exec --auto high -f "$PROMPT_FILE" >"$LOG_FILE" 2>&1 &
+      ;;
+  esac
+  agent_pid=$!
+  agent_pgid=$(process_pgid "$agent_pid")
+
+  AGENT_PID="$agent_pid"
+  AGENT_PGID="$agent_pgid"
+  SIDECAR_PID="$sidecar_pid"
+
+  log_orchestrator "agent_spawned: iteration=$CURRENT_ITERATION agent=$AGENT pid=$AGENT_PID pgid=${AGENT_PGID:-unknown} sidecar_pid=$SIDECAR_PID log=$LOG_FILE"
+  log_event "process" "spawned" "iteration=$CURRENT_ITERATION agent_pid=$AGENT_PID agent_pgid=${AGENT_PGID:-unknown} sidecar_pid=$SIDECAR_PID"
 }
 
-# Runs agent in background with heartbeat monitoring.
 run_agent_with_watchdog() {
-  (
-    run_agent_iteration
-  ) &
-  local agent_pid=$!
+  local agent_exit sidecar_exit
 
+  start_agent_iteration || return $?
+
+  set +e
   monitor_process_with_heartbeat \
-    "$agent_pid" \
+    "$AGENT_PID" \
     "agent iteration=$CURRENT_ITERATION agent=$AGENT" \
     "$LOG_FILE" \
     "$HEARTBEAT_SEC" \
     "$AGENT_IDLE_TIMEOUT_SEC" \
-    "$EVENT_LOG"
-  return $?
+    "$EVENT_LOG" \
+    "" \
+    "$POST_RESULT_IDLE_SEC" \
+    "$AGENT_PID,$SIDECAR_PID"
+  agent_exit=$?
+  stop_stream_sidecar "$SIDECAR_PID"
+  sidecar_exit=$?
+  set -e
+
+  log_orchestrator "agent_stream_closed: iteration=$CURRENT_ITERATION agent_pid=$AGENT_PID sidecar_pid=$SIDECAR_PID sidecar_exit=$sidecar_exit"
+  log_event "process" "closed" "iteration=$CURRENT_ITERATION agent_pid=$AGENT_PID sidecar_pid=$SIDECAR_PID sidecar_exit=$sidecar_exit"
+
+  return "$agent_exit"
 }
 
 # ── Main Loop ──────────────────────────────────────────────

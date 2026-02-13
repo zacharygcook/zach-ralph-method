@@ -18,6 +18,38 @@ process_alive() {
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
 }
 
+process_pgid() {
+  local pid="${1:-}"
+  [[ -z "$pid" ]] && return 1
+  ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]'
+}
+
+append_process_snapshot_event() {
+  local event_log="$1"
+  local event_type="$2"
+  local status="$3"
+  local label="$4"
+  local pids_csv="${5:-}"
+
+  [[ -z "$event_log" ]] && return 0
+  [[ -z "$pids_csv" ]] && return 0
+
+  local snapshot
+  snapshot=$(
+    for pid in ${pids_csv//,/ }; do
+      [[ -z "$pid" ]] && continue
+      ps -o pid,ppid,pgid,stat,etime,command= -p "$pid" 2>/dev/null || true
+      pgrep -P "$pid" 2>/dev/null | while read -r child_pid; do
+        ps -o pid,ppid,pgid,stat,etime,command= -p "$child_pid" 2>/dev/null || true
+      done
+    done | awk 'NF > 0'
+  )
+
+  if [[ -n "$snapshot" ]]; then
+    append_event "$event_log" "$event_type" "$status" "$label :: $(echo "$snapshot" | tr '\n' '; ')"
+  fi
+}
+
 kill_process_tree() {
   local pid="${1:-}"
   [[ -z "$pid" ]] && return 0
@@ -158,7 +190,9 @@ detect_completion_scope() {
 #   $4  heartbeat_sec    - Seconds between heartbeat events (0=disabled)
 #   $5  idle_timeout_sec - Kill after this many seconds idle (0=disabled)
 #   $6  event_log        - Path to events.jsonl
-#   $7  state_file       - (optional) JSON state file to update
+#   $7  state_file          - (optional) JSON state file to update
+#   $8  post_result_idle_sec- Kill after terminal result + idle (0=disabled)
+#   $9  observed_pids_csv   - Comma-separated PIDs to snapshot on stall
 #
 # Returns: exit code of monitored process, or 11 on idle timeout.
 monitor_process_with_heartbeat() {
@@ -169,12 +203,15 @@ monitor_process_with_heartbeat() {
   local idle_timeout_sec="$5"
   local event_log="$6"
   local state_file="${7:-}"
+  local post_result_idle_sec="${8:-0}"
 
-  local start last_growth last_heartbeat last_size now size
+  local start last_growth last_heartbeat last_size now size result_seen
+  local observed_pids="${9:-$pid}"
   start=$(epoch_now)
   last_growth="$start"
   last_heartbeat="$start"
   last_size=0
+  result_seen=0
 
   if [[ -f "$log_file" ]]; then
     last_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
@@ -186,6 +223,15 @@ monitor_process_with_heartbeat() {
   while jobs -pr | grep -qx "$pid"; do
     sleep 1
     now=$(epoch_now)
+
+    if (( post_result_idle_sec > 0 )) && (( result_seen == 0 )); then
+      if [[ -f "$log_file" ]] && grep -q '"type":"result"' "$log_file"; then
+        result_seen=1
+        size=$(wc -c < "$log_file" 2>/dev/null || echo "$last_size")
+        append_event "$event_log" "result_seen" "running" "$label detected terminal result event at_bytes=$size"
+        append_process_snapshot_event "$event_log" "process_snapshot" "running" "$label result_seen" "$observed_pids"
+      fi
+    fi
 
     if [[ -f "$log_file" ]]; then
       size=$(wc -c < "$log_file" 2>/dev/null || echo "$last_size")
@@ -204,10 +250,19 @@ monitor_process_with_heartbeat() {
     fi
 
     if (( idle_timeout_sec > 0 )) && (( now - last_growth > idle_timeout_sec )); then
+      append_process_snapshot_event "$event_log" "process_snapshot" "failed" "$label idle_timeout_before_kill" "$observed_pids"
       append_event "$event_log" "idle_timeout" "failed" "$label exceeded idle timeout (${idle_timeout_sec}s)"
       kill_process_tree "$pid"
       wait "$pid" 2>/dev/null || true
       return 11
+    fi
+
+    if (( post_result_idle_sec > 0 )) && (( result_seen == 1 )) && (( now - last_growth > post_result_idle_sec )); then
+      append_process_snapshot_event "$event_log" "process_snapshot" "failed" "$label post_result_stall_before_kill" "$observed_pids"
+      append_event "$event_log" "post_result_stall" "failed" "$label stalled after result (${post_result_idle_sec}s idle)"
+      kill_process_tree "$pid"
+      wait "$pid" 2>/dev/null || true
+      return 15
     fi
   done
 
