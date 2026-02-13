@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+# Shared helpers for Ralph loop + hooks.
+# Source this from loop.sh, post-sprint.sh, and individual hooks.
+# shellcheck disable=SC2120
+
+# ── Timestamps ──────────────────────────────────────────────
+now_iso() {
+  date -Iseconds
+}
+
+epoch_now() {
+  date +%s
+}
+
+# ── Process Management ──────────────────────────────────────
+process_alive() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+kill_process_tree() {
+  local pid="${1:-}"
+  [[ -z "$pid" ]] && return 0
+
+  # Best effort: terminate children first, then the parent.
+  pkill -TERM -P "$pid" 2>/dev/null || true
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 1
+  pkill -KILL -P "$pid" 2>/dev/null || true
+  kill -KILL "$pid" 2>/dev/null || true
+}
+
+# ── Structured Event Logging ───────────────────────────────
+# Appends a JSON event to an events.jsonl file.
+# Usage: append_event "$EVENT_LOG" "iteration" "started" "iteration=1"
+append_event() {
+  local event_log="$1"
+  local event_type="$2"
+  local status="$3"
+  local message="$4"
+
+  [[ -z "$event_log" ]] && return 0
+
+  local ts
+  ts=$(now_iso)
+  jq -nc \
+    --arg ts "$ts" \
+    --arg type "$event_type" \
+    --arg status "$status" \
+    --arg msg "$message" \
+    '{timestamp:$ts,type:$type,status:$status,message:$msg}' >> "$event_log" 2>/dev/null || true
+}
+
+# ── Lock-Protected Manifest Updates ────────────────────────
+# Prevents concurrent jq writes from corrupting manifest.json.
+with_lock() {
+  local lock_path="$1"
+  local timeout_sec="${2:-15}"
+  shift 2
+
+  local start now
+  start=$(epoch_now)
+
+  while ! mkdir "$lock_path" 2>/dev/null; do
+    now=$(epoch_now)
+    if (( now - start >= timeout_sec )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+
+  "$@"
+  local exit_code=$?
+  rmdir "$lock_path" 2>/dev/null || true
+  return "$exit_code"
+}
+
+manifest_update_locked() {
+  local manifest="$1"
+  shift
+
+  local lock_path="${manifest}.lockdir"
+  local tmp="${manifest}.tmp"
+
+  _manifest_update_inner() {
+    if ! jq "$@" "$manifest" > "$tmp"; then
+      return 1
+    fi
+    mv "$tmp" "$manifest"
+  }
+
+  with_lock "$lock_path" 20 _manifest_update_inner "$@"
+}
+
+# ── Dependency Preflight ───────────────────────────────────
+# Checks that required commands exist.
+# Usage: require_commands jq codex python3 git
+# Returns non-zero and prints missing commands if any are absent.
+require_commands() {
+  local missing=0
+  local cmd
+  for cmd in "$@"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      echo "MISSING_COMMAND:$cmd"
+      missing=1
+    fi
+  done
+  return "$missing"
+}
+
+# ── Chunk State Queries ────────────────────────────────────
+count_passed_chunks() {
+  local chunks_file="$1"
+  jq '[.chunks[] | select(.passes == true)] | length' "$chunks_file" 2>/dev/null || echo 0
+}
+
+all_chunks_pass() {
+  local chunks_file="$1"
+  jq -e 'all(.chunks[]; .passes == true)' "$chunks_file" >/dev/null 2>&1
+}
+
+# ── Scoped Completion Marker Detection ─────────────────────
+# Returns: "sprint", "chunk", "legacy_chunk", or "none"
+#
+# Markers (in priority order):
+#   RALPH_SPRINT_COMPLETE  - all chunks done, sprint finished
+#   RALPH_CHUNK_COMPLETE   - current chunk done
+#   RALPH_COMPLETE         - legacy (treated as chunk-level)
+detect_completion_scope() {
+  local log_file="$1"
+
+  if grep -q "RALPH_SPRINT_COMPLETE" "$log_file"; then
+    echo "sprint"
+    return 0
+  fi
+
+  if grep -q "RALPH_CHUNK_COMPLETE" "$log_file"; then
+    echo "chunk"
+    return 0
+  fi
+
+  if grep -q "RALPH_COMPLETE" "$log_file"; then
+    echo "legacy_chunk"
+    return 0
+  fi
+
+  echo "none"
+}
+
+# ── Heartbeat + Idle Monitoring ────────────────────────────
+# Monitors a background process with periodic heartbeats and
+# optional idle timeout (kills process if log file stops growing).
+#
+# Args:
+#   $1  pid              - PID to monitor
+#   $2  label            - Human-readable label for events
+#   $3  log_file         - Log file to check for growth
+#   $4  heartbeat_sec    - Seconds between heartbeat events (0=disabled)
+#   $5  idle_timeout_sec - Kill after this many seconds idle (0=disabled)
+#   $6  event_log        - Path to events.jsonl
+#   $7  state_file       - (optional) JSON state file to update
+#
+# Returns: exit code of monitored process, or 11 on idle timeout.
+monitor_process_with_heartbeat() {
+  local pid="$1"
+  local label="$2"
+  local log_file="$3"
+  local heartbeat_sec="$4"
+  local idle_timeout_sec="$5"
+  local event_log="$6"
+  local state_file="${7:-}"
+
+  local start last_growth last_heartbeat last_size now size
+  start=$(epoch_now)
+  last_growth="$start"
+  last_heartbeat="$start"
+  last_size=0
+
+  if [[ -f "$log_file" ]]; then
+    last_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
+  fi
+
+  # Use jobs-based liveness for child processes spawned by this shell.
+  # This avoids zombie false-positives where `kill -0` can stay true
+  # on macOS until the process is reaped.
+  while jobs -pr | grep -qx "$pid"; do
+    sleep 1
+    now=$(epoch_now)
+
+    if [[ -f "$log_file" ]]; then
+      size=$(wc -c < "$log_file" 2>/dev/null || echo "$last_size")
+      if [[ "$size" != "$last_size" ]]; then
+        last_growth="$now"
+        last_size="$size"
+      fi
+    fi
+
+    if (( heartbeat_sec > 0 )) && (( now - last_heartbeat >= heartbeat_sec )); then
+      append_event "$event_log" "heartbeat" "running" "$label alive elapsed=$((now-start))s idle=$((now-last_growth))s"
+      last_heartbeat="$now"
+      if [[ -n "$state_file" ]]; then
+        jq -nc --arg ts "$(now_iso)" --argjson pid "$pid" --arg status "running" '{pid:$pid,status:$status,last_heartbeat:$ts}' > "$state_file" 2>/dev/null || true
+      fi
+    fi
+
+    if (( idle_timeout_sec > 0 )) && (( now - last_growth > idle_timeout_sec )); then
+      append_event "$event_log" "idle_timeout" "failed" "$label exceeded idle timeout (${idle_timeout_sec}s)"
+      kill_process_tree "$pid"
+      wait "$pid" 2>/dev/null || true
+      return 11
+    fi
+  done
+
+  set +e
+  wait "$pid"
+  local wait_exit=$?
+  set -e
+  return "$wait_exit"
+}
