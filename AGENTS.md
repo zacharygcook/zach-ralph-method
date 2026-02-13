@@ -34,20 +34,36 @@ SPEC ──▶ PLAN ──▶ CHUNK ──▶ RUN
 
 ```
 <project>/.ralph/
-├── config.env                  # Agent, iterations, CURRENT_SPRINT
+├── config.env                  # Agent, iterations, CURRENT_SPRINT, timeouts
 ├── loop.sh                     # Bash loop script
+├── status.sh                   # Operator status command
+├── lib/
+│   └── ralph-common.sh         # Shared helpers (locking, heartbeat, events)
 ├── format-stream.py            # Output formatter (Claude)
+├── format-codex-stream.py      # Output formatter (Codex)
+├── hooks/
+│   ├── post-sprint.sh          # Hook orchestrator (state files, lock recovery)
+│   ├── review.sh               # Code review (preflight, events)
+│   ├── document.sh             # Documentation (preflight, events)
+│   └── test.sh                 # Test suite (phase-aware, resumable)
+├── prompts/
+│   ├── review.md               # Code review prompt template
+│   ├── document.md             # Documentation prompt template
+│   └── test.md                 # Test generation prompt template
 ├── logs/
-│   └── <sprint>/run-<timestamp>/   # Logs per sprint per run
+│   └── <sprint>/run-<timestamp>/
+│       ├── orchestrator.log        # Timestamped orchestrator events
+│       ├── events.jsonl            # Structured event stream
 │       ├── iteration-N.log         # Full JSON log
 │       └── iteration-N.summary.log # Human-readable summary
 └── sprints/
-    └── 1-sprint-name/          # Each sprint gets numbered folder
+    └── 1-sprint-name/
         ├── prompt.md           # Sprint-specific prompt
         ├── README.md           # Sprint goal (3-4 lines)
         ├── IMPLEMENTATION_PLAN.md
         ├── relevant-specs.md
-        └── chunks.json
+        ├── chunks.json
+        └── manifest.json       # Sprint tracking (phase, hooks, commits)
 ```
 
 Set `CURRENT_SPRINT=1-sprint-name` in config.env to select active sprint.
@@ -87,10 +103,14 @@ See `docs/sprint-structure.md` for ASCII diagrams and full details.
 
 1. Enter planning mode → create `IMPLEMENTATION_PLAN.md`
 2. Create `chunks.json` based on plan
-3. Run `./.ralph/loop.sh`
-4. Agent completes chunk → commits → sets `passes: true` → outputs RALPH_COMPLETE
-5. Loop auto-continues to next chunk (fresh context window per iteration)
-6. Loop exits when: all chunks pass, agent blocked, or max iterations reached
+3. Run `./.ralph/loop.sh` (or `./loop.sh --resume` to continue from last iteration)
+4. Agent completes chunk → commits → sets `passes: true` → outputs `RALPH_CHUNK_COMPLETE`
+5. Loop validates state-delta (chunk count must increase) before accepting
+6. Loop auto-continues to next chunk (fresh context window per iteration)
+7. Loop exits when: all chunks pass, agent blocked, or max iterations reached
+8. Post-sprint hooks run automatically (review, docs, tests)
+
+**CLI flags**: `--resume` (continue from last iteration), `--force-hooks` (re-run completed hooks)
 
 **Auto-continue**: No manual intervention between chunks. Each chunk gets fresh context. Agent updates chunks.json itself.
 
@@ -102,7 +122,9 @@ See `docs/sprint-structure.md` for ASCII diagrams and full details.
 1. Complete chunk's acceptance criteria
 2. `git add -A && git commit -m "Add X feature"` (descriptive message)
 3. Update chunks.json: set `passes: true`
-4. Output: `<promise>RALPH_COMPLETE</promise>`
+4. Output: `<promise>RALPH_CHUNK_COMPLETE</promise>`
+
+**Scoped markers**: `RALPH_CHUNK_COMPLETE` (chunk done), `RALPH_SPRINT_COMPLETE` (all chunks done), `RALPH_COMPLETE` (legacy, still recognized as chunk-level).
 
 **Commit rules for prompts**:
 - No "Generated with Claude Code" lines
@@ -114,7 +136,7 @@ See `docs/sprint-structure.md` for ASCII diagrams and full details.
 | Agent | Autonomous Flag |
 |-------|-----------------|
 | claude | `--dangerously-skip-permissions` (sandbox!) |
-| codex | `--auto-approve` |
+| codex | `exec --yolo` (max autonomy, no sandbox) |
 | amp | `--autonomous` |
 | opencode | `--auto` |
 | droid | `exec --auto high` |

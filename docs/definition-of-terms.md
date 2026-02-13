@@ -91,15 +91,33 @@ The loop's job is persistence across context resets. Files survive. Git commits 
 
 ---
 
-## RALPH_COMPLETE
+## Completion Markers
 
-The completion signal: `<promise>RALPH_COMPLETE</promise>`
+The loop recognizes three scoped completion markers (checked in priority order):
 
-When the agent outputs this, it signals:
+### RALPH_SPRINT_COMPLETE
+
+Sprint-level signal: `<promise>RALPH_SPRINT_COMPLETE</promise>`
+
+Signals that ALL chunks are complete and the sprint is finished. The loop skips state-delta validation for this marker.
+
+### RALPH_CHUNK_COMPLETE
+
+Chunk-level signal: `<promise>RALPH_CHUNK_COMPLETE</promise>`
+
+The standard completion marker. Signals:
 - Current chunk's acceptance criteria are met
 - chunks.json has been updated (`passes: true`)
 - Work has been committed to git
-- Ready for next chunk (or sprint complete)
+- Ready for next chunk
+
+**State-delta validation**: The loop verifies that the passed chunk count actually increased before accepting this signal. This prevents false positives from marker-only emissions without real state change.
+
+### RALPH_COMPLETE (Legacy)
+
+Legacy signal: `<promise>RALPH_COMPLETE</promise>`
+
+Still recognized for backward compatibility. Treated as chunk-level (`legacy_chunk` scope) with the same state-delta validation as `RALPH_CHUNK_COMPLETE`. New prompts should use `RALPH_CHUNK_COMPLETE` instead.
 
 ---
 
@@ -142,3 +160,39 @@ A common misconception: sprint size is limited by context windows.
 - A sprint can be arbitrarily large if it can be decomposed into chunks
 
 The agent's context resets between iterations, but progress persists in files and git. This is the core insight that enables large sprints.
+
+---
+
+## Heartbeat
+
+A periodic event emitted by the loop's monitor to prove a process is alive. Logged to `events.jsonl` with elapsed time and idle duration. Controlled by `HEARTBEAT_SEC` (default 30s). Not a timeout — it's observability.
+
+---
+
+## Idle Timeout
+
+A safety mechanism that kills a process if its log file stops growing for a configurable duration. Defaults to disabled (`0`). When triggered, returns exit code 11. This is the "heartbeat-first" philosophy: observe by default, only kill on opt-in.
+
+---
+
+## Manifest Phase
+
+The lifecycle phase of a sprint, tracked in `manifest.json`:
+
+| Phase | Meaning |
+|-------|---------|
+| `running` | Chunks are being executed |
+| `chunks_done` | All chunks passed, hooks may still be pending |
+| `hooks_done` | All post-sprint hooks completed |
+
+---
+
+## State-Delta Validation
+
+The loop's defense against false completion signals. When the agent emits `RALPH_CHUNK_COMPLETE`, the loop checks whether the number of passed chunks actually increased. If it didn't, the signal is ignored and logged as `completion_signal_ignored`. This prevents marker-only emissions from prematurely advancing the loop.
+
+---
+
+## Reconciliation
+
+The cleanup process triggered on loop exit (including signals). Ensures manifest is finalized with end_commit and hooks are run if all chunks completed. Runs at most once per loop execution.

@@ -54,42 +54,56 @@ See `templates/GOAL.md.template` and `templates/GOALS.md.template` for formats.
 
 ```
 <project>/.ralph/
-├── config.env                  # Agent, iterations, CURRENT_SPRINT
+├── config.env                  # Agent, iterations, CURRENT_SPRINT, timeouts
 ├── loop.sh                     # Bash loop script
+├── status.sh                   # Operator status command
+├── lib/
+│   └── ralph-common.sh         # Shared helpers (locking, heartbeat, events)
 ├── format-stream.py            # Output formatter (Claude)
+├── format-codex-stream.py      # Output formatter (Codex)
+├── hooks/
+│   ├── post-sprint.sh          # Hook orchestrator (state files, lock recovery)
+│   ├── review.sh               # Code review (preflight, events)
+│   ├── document.sh             # Documentation (preflight, events)
+│   └── test.sh                 # Test suite (phase-aware, resumable)
+├── prompts/
+│   ├── review.md               # Code review prompt template
+│   ├── document.md             # Documentation prompt template
+│   └── test.md                 # Test generation prompt template
 ├── logs/
-│   └── <sprint>/run-<timestamp>/   # Logs per sprint per run
+│   └── <sprint>/run-<timestamp>/
+│       ├── orchestrator.log        # Timestamped orchestrator events
+│       ├── events.jsonl            # Structured event stream
 │       ├── iteration-N.log         # Full JSON log
 │       └── iteration-N.summary.log # Human-readable summary
 └── sprints/
-    └── 1-sprint-name/          # Each sprint gets numbered folder
+    └── 1-sprint-name/
         ├── prompt.md           # Sprint-specific prompt
         ├── README.md           # Sprint goal (3-4 lines)
         ├── IMPLEMENTATION_PLAN.md
         ├── relevant-specs.md
-        └── chunks.json
+        ├── chunks.json
+        └── manifest.json       # Sprint tracking (phase, hooks, commits)
 ```
 
 Set `CURRENT_SPRINT=1-sprint-name` in config.env to select active sprint.
 
 ## Post-Sprint Hooks
 
-After all chunks pass, the loop runs hooks for automation:
+After all chunks pass, the loop runs hooks for automation. Each hook has:
+- **Dependency preflight** - checks required commands exist before running
+- **Lock-protected manifest** - prevents concurrent writes from corrupting state
+- **State files** - `.hook-<name>.state.json` tracks pid, status, heartbeat
+- **Stale recovery** - auto-detects interrupted hooks stuck in "running" state
+- **Heartbeat monitoring** - periodic event logging during execution
+- **Marker idempotency** - `.hook-<name>.done` files prevent re-running completed hooks
 
-```
-.ralph/
-├── hooks/
-│   ├── post-sprint.sh      # Orchestrator (runs all hooks)
-│   ├── review.sh           # Codex code review + auto-fix ALL issues
-│   ├── document.sh         # Hybrid: sprint summary + update main docs
-│   └── test.sh             # Test suite → backend/tests/sprint/
-└── prompts/
-    ├── review.md           # Code review prompt template
-    ├── document.md         # Documentation prompt template
-    └── test.md             # Test generation prompt template
-```
+**Test hook phases** (each resumable independently):
+1. `generate_tests` - Agent creates test files
+2. `verify_backend_tests` - Runs generated tests
+3. `run_e2e` - Playwright e2e (auto-skipped when no frontend artifacts)
 
-**Manifest tracking**: Each sprint gets `manifest.json` tracking start/end commits, timestamps, and per-chunk commits for review/docs/tests.
+**Manifest tracking**: Each sprint gets `manifest.json` tracking phase, hooks status/reason, test phases, commits, and timestamps.
 
 ## Key Concepts
 
@@ -107,22 +121,35 @@ See `docs/sprint-structure.md` for ASCII diagrams and full details.
 
 1. Enter planning mode → create `IMPLEMENTATION_PLAN.md`
 2. Create `chunks.json` based on plan
-3. Run `./.ralph/loop.sh`
-4. Agent completes chunk → commits → sets `passes: true` → outputs RALPH_COMPLETE
-5. Loop auto-continues to next chunk (fresh context window per iteration)
-6. Loop exits when: all chunks pass, agent blocked, or max iterations reached
+3. Run `./.ralph/loop.sh` (or `./loop.sh --resume` to continue from last iteration)
+4. Agent completes chunk → commits → sets `passes: true` → outputs `RALPH_CHUNK_COMPLETE`
+5. Loop validates state-delta (chunk count must actually increase) before accepting
+6. Loop auto-continues to next chunk (fresh context window per iteration)
+7. Loop exits when: all chunks pass, agent blocked, or max iterations reached
+8. Post-sprint hooks run automatically (review, docs, tests)
+
+**CLI flags**:
+- `--resume` - Continue from last completed iteration (reads from manifest)
+- `--force-hooks` - Re-run post-sprint hooks even if already completed
 
 **Auto-continue**: No manual intervention between chunks. Each chunk gets fresh context. Agent updates chunks.json itself.
 
 ## Git Commits
 
-**Agent commits after each chunk** with a descriptive message, then outputs RALPH_COMPLETE. The loop has backup commits but they become no-ops if agent already committed.
+**Agent commits after each chunk** with a descriptive message, then outputs the completion marker. The loop has backup commits but they become no-ops if agent already committed.
 
 **Completion sequence**:
 1. Complete chunk's acceptance criteria
 2. `git add -A && git commit -m "Add X feature"` (descriptive message)
 3. Update chunks.json: set `passes: true`
-4. Output: `<promise>RALPH_COMPLETE</promise>`
+4. Output: `<promise>RALPH_CHUNK_COMPLETE</promise>`
+
+**Scoped completion markers**:
+- `RALPH_CHUNK_COMPLETE` - Current chunk is done (normal case)
+- `RALPH_SPRINT_COMPLETE` - ALL chunks are done, sprint finished
+- `RALPH_COMPLETE` - Legacy marker (treated as chunk-level, still recognized)
+
+**State-delta validation**: The loop checks that the passed chunk count actually increased before accepting a marker-based completion signal. This prevents false positives from marker-only emissions.
 
 **Commit rules for prompts**:
 - No "Generated with Claude Code" lines
@@ -160,6 +187,38 @@ claude --dangerously-skip-permissions -p "$(cat prompt.md)" \
 - `--verbose` - Required for stream-json
 
 Pipe through `format-stream.py` (in templates/) for colored output. Log file gets raw JSON (grep still works).
+
+## Heartbeat & Monitoring
+
+The loop uses heartbeat-first orchestration — long-running operations are allowed by default, with optional idle timeouts for safety.
+
+**Event log**: Each run produces `events.jsonl` with structured JSON events (heartbeats, completions, failures, timeouts).
+
+**Orchestrator log**: Human-readable timestamped log at `orchestrator.log`.
+
+**Status command**: Check sprint state at any time:
+```bash
+.ralph/status.sh                    # Uses CURRENT_SPRINT from config.env
+.ralph/status.sh 3-api-integration  # Specific sprint
+```
+
+Shows: manifest phase, iteration count, hook statuses, test phases, latest run info, heartbeat age, hook pid liveness.
+
+**Signal handling**: INT/TERM signals trigger clean reconciliation — manifest is finalized and hooks run if chunks are complete.
+
+## Idle Timeout Rollout
+
+All idle timeouts default to disabled (`0`). Enable them in stages via `config.env`:
+
+| Stage | What's Protected | Key Setting |
+|-------|-----------------|-------------|
+| 1 (baseline) | Nothing - heartbeats only | All `*_TIMEOUT_SEC=0` |
+| 2 | Hooks only | `HOOK_IDLE_TIMEOUT_SEC=7200` |
+| 3 | + Backend tests | `BACKEND_TEST_IDLE_TIMEOUT_SEC=3600` |
+| 4 | + E2E tests | `E2E_IDLE_TIMEOUT_SEC=10800` |
+| 5 | + Agent iterations | `AGENT_IDLE_TIMEOUT_SEC=14400` |
+
+Keep `AGENT_IDLE_TIMEOUT_SEC=0` unless you hit "result printed but loop stuck" failures.
 
 ## Common Gotchas
 
@@ -213,7 +272,7 @@ Use `templates/multi-repo/` for these projects.
 - `docs/sprint-structure.md` - How to organize sprints and chunks
 - `templates/monorepo/` - Single-repo templates
 - `templates/multi-repo/` - Multi-repo templates
-- `templates/shared/` - Formatters (used by both modes)
+- `templates/shared/` - Formatters and shared library (used by both modes)
 - `templates/GOAL.md.template` - Single goal format
 - `templates/GOALS.md.template` - Multiple goals format
 

@@ -115,7 +115,7 @@ Uses `tee` for **real-time streaming** and **auto-continues** through all chunks
 │    └─────────────┘            │                        │
 │                               ▼                        │
 │                    ┌──────────────────┐                │
-│                    │ RALPH_COMPLETE?  │                │
+│                    │ RALPH_CHUNK_COMPLETE?  │                │
 │                    └────────┬─────────┘                │
 │                             │                          │
 │              ┌──────────────┼──────────────┐           │
@@ -138,23 +138,33 @@ Uses `tee` for **real-time streaming** and **auto-continues** through all chunks
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Key behavior**: Agent completes chunk → commits with descriptive message → sets `passes: true` → outputs RALPH_COMPLETE. Loop continues to next chunk (fresh context) until: all chunks pass, agent blocked, or max iterations reached.
+**Key behavior**: Agent completes chunk → commits with descriptive message → sets `passes: true` → outputs RALPH_CHUNK_COMPLETE. Loop continues to next chunk (fresh context) until: all chunks pass, agent blocked, or max iterations reached.
 
 **Git commit sequence**:
 1. Complete acceptance criteria
 2. `git add -A && git commit -m "Descriptive message"`
 3. Update chunks.json: `passes: true`
-4. Output: `<promise>RALPH_COMPLETE</promise>`
+4. Output: `<promise>RALPH_CHUNK_COMPLETE</promise>`
+
+**Scoped markers**: Use `RALPH_CHUNK_COMPLETE` for individual chunks, `RALPH_SPRINT_COMPLETE` when all chunks are done. Legacy `RALPH_COMPLETE` is still recognized as chunk-level.
+
+**State-delta validation**: The loop verifies chunk pass count increased before accepting a marker-based completion signal.
 
 ## Directory Structure
 
 ```
 <project>/.ralph/
-├── config.env                      # Agent, max iterations, CURRENT_SPRINT
-├── loop.sh                         # Bash loop script
+├── config.env                      # Agent, max iterations, CURRENT_SPRINT, timeouts
+├── loop.sh                         # Bash loop script (heartbeat, resume, state-delta)
+├── status.sh                       # Operator status command
+├── lib/
+│   └── ralph-common.sh             # Shared helpers (locking, heartbeat, events)
 ├── format-stream.py                # Output formatter (Claude)
+├── format-codex-stream.py          # Output formatter (Codex)
 ├── logs/
 │   └── <sprint>/run-<timestamp>/   # Logs organized by sprint and run
+│       ├── orchestrator.log        # Timestamped orchestrator events
+│       ├── events.jsonl            # Structured event stream
 │       ├── iteration-N.log         # Full JSON log
 │       └── iteration-N.summary.log # Human-readable summary
 └── sprints/
@@ -200,7 +210,7 @@ claude --dangerously-skip-permissions -p "$(cat "$PROMPT_FILE")" \
 - Tool results (success/error)
 - Final result with cost and duration
 
-The log file (`$LOG_FILE`) gets raw JSON, terminal shows formatted output. A separate summary log (`iteration-N.summary.log`) captures human-readable output. Grep for `RALPH_COMPLETE` still works in the JSON.
+The log file (`$LOG_FILE`) gets raw JSON, terminal shows formatted output. A separate summary log (`iteration-N.summary.log`) captures human-readable output. Grep for `RALPH_CHUNK_COMPLETE` still works in the JSON.
 
 **Formatter** (`format-stream.py`) - simplified example, see `templates/format-stream.py` for full version with summary logging:
 ```python
