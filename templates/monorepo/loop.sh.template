@@ -346,7 +346,7 @@ run_agent_with_watchdog() {
 
   start_agent_iteration || return $?
 
-  set +e
+  agent_exit=0
   monitor_process_with_heartbeat \
     "$AGENT_PID" \
     "agent iteration=$CURRENT_ITERATION agent=$AGENT" \
@@ -356,11 +356,9 @@ run_agent_with_watchdog() {
     "$EVENT_LOG" \
     "" \
     "$POST_RESULT_IDLE_SEC" \
-    "$AGENT_PID,$SIDECAR_PID"
-  agent_exit=$?
+    "$AGENT_PID,$SIDECAR_PID" || agent_exit=$?
   stop_stream_sidecar "$SIDECAR_PID"
   sidecar_exit="${STOPPED_SIDECAR_EXIT:-0}"
-  set -e
 
   if (( sidecar_exit != 0 )); then
     log_orchestrator "sidecar_nonzero_exit: iteration=$CURRENT_ITERATION sidecar_pid=$SIDECAR_PID exit=$sidecar_exit"
