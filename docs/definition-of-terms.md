@@ -63,7 +63,7 @@ An **iteration** is a single run of the agent within the loop.
 
 - Agent receives prompt
 - Agent works until it exits (completion, blocked, or timeout)
-- Loop checks for signals (`RALPH_COMPLETE`, `<blocked>`)
+- Loop checks for signals (`RALPH_CHUNK_COMPLETE`, `RALPH_SPRINT_COMPLETE`, `<blocked>`)
 - Loop commits progress and continues (or stops)
 
 One chunk may take multiple iterations. One iteration may complete a chunk. The relationship is flexible.

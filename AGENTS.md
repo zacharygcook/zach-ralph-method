@@ -116,7 +116,7 @@ See `docs/sprint-structure.md` for ASCII diagrams and full details.
 
 ## Git Commits
 
-**Agent commits after each chunk** with a descriptive message, then outputs RALPH_COMPLETE. The loop has backup commits but they become no-ops if agent already committed.
+**Agent commits after each chunk** with a descriptive message, then outputs RALPH_CHUNK_COMPLETE. The loop has backup commits but they become no-ops if agent already committed.
 
 **Completion sequence**:
 1. Complete chunk's acceptance criteria

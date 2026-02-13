@@ -14,10 +14,15 @@ Use this when:
 ```
 project-parent/           # NOT a git repo
 ├── .ralph/               # Ralph lives here
-│   ├── config.env        # REPOS="api frontend"
-│   ├── loop.sh
-│   ├── sprints/
-│   └── hooks/
+│   ├── config.env        # REPOS="api frontend", timeouts
+│   ├── loop.sh           # Hardened loop (heartbeat, state-delta)
+│   ├── status.sh         # Operator status command
+│   ├── lib/
+│   │   └── ralph-common.sh  # Shared helpers (locking, events)
+│   ├── hooks/
+│   ├── prompts/
+│   ├── logs/
+│   └── sprints/
 ├── api/                  # Separate git repo
 │   ├── .git/
 │   └── CLAUDE.md
@@ -121,11 +126,12 @@ Chunks have a `repo` field:
 
 ### manifest.json
 
-Tracks commits per-repo:
+Tracks commits per-repo and sprint lifecycle:
 
 ```json
 {
   "sprint": "1-initial-setup",
+  "phase": "running",
   "repos": {
     "api": {
       "start_commit": "abc123",
@@ -134,6 +140,18 @@ Tracks commits per-repo:
     "frontend": {
       "start_commit": "def456",
       "end_commit": null
+    }
+  },
+  "hooks": {
+    "review": { "status": "pending" },
+    "documentation": { "status": "pending" },
+    "tests": {
+      "status": "pending",
+      "phases": {
+        "generate_tests": { "status": "pending" },
+        "verify_backend_tests": { "status": "pending" },
+        "run_e2e": { "status": "pending" }
+      }
     }
   },
   "commits": [
