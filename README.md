@@ -28,7 +28,7 @@ SPEC → PLAN → CHUNKS → IMPLEMENT → VERIFY → COMMIT
 Vendor the complete skill into your project:
 
 ```bash
-npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy --agent '*' -y
+npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy -y
 ```
 
 Then initialize from the project-local copy:
@@ -36,6 +36,9 @@ Then initialize from the project-local copy:
 ```bash
 python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo . --agent codex --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
 ```
+
+The Skills CLI detects the active coding agent. Pass `--agent <name>` only when targeting one
+explicitly; `--agent '*'` intentionally installs copies for every supported client.
 
 Or clone this repository and run the canonical script directly:
 

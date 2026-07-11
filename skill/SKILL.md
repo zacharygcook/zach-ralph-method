@@ -12,11 +12,13 @@ Operate an autonomous implementation loop as a resumable state machine, not a on
 Vendor this skill into a project with the upstream Skills CLI:
 
 ```bash
-npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy --agent '*' -y
+npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy -y
 ```
 
-This creates a project-local `.agents/skills/ralph-workflows/` copy containing the instructions,
-installer, and runtime templates. Run the bundled installer from that directory.
+The CLI detects the active coding agent and creates a project-local skill copy containing the
+instructions, installer, and runtime templates. Use `--agent <name>` only to target a specific agent;
+`--agent '*'` deliberately creates adapter copies for every supported client. Run the bundled
+installer from the detected skill directory.
 
 Install the bundled hardened Bash runtime only when the user asks to initialize or repair Ralph:
 
