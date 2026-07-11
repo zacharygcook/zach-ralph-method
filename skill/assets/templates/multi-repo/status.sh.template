@@ -37,6 +37,7 @@ echo "Directory: $SPRINT_DIR"
 echo "Repos: $REPOS"
 echo "Harness: ${RALPH_AGENT:-unset}"
 echo "Model: ${RALPH_AGENT_MODEL:-custom-command}"
+echo "Reasoning: ${RALPH_AGENT_REASONING:-unset}"
 echo "Turn budgets: sprint=${MAX_SPRINT_ITERATIONS:-unset}, per-chunk=${MAX_CHUNK_ITERATIONS:-unset}"
 
 # Manifest info

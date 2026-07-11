@@ -5,7 +5,7 @@ This repository packages a hardened autonomous coding loop for one Git repositor
 ## Before changing the runtime
 
 - Read `README.md`, the relevant guide under `docs/`, and the templates you will change.
-- Preserve operator-owned controls: harness, standard-harness model, and positive sprint/per-chunk turn budgets have no defaults; automatic broad staging requires the separate `I_ACCEPT_GIT_ADD_ALL` sentinel.
+- Preserve operator-owned controls: harness, standard-harness model and reasoning, and positive sprint/per-chunk turn budgets have no defaults; automatic broad staging requires the separate `I_ACCEPT_GIT_ADD_ALL` sentinel.
 - Never make a particular language, package manager, test framework, repository name, or branch part of the generic runtime.
 - Keep monorepo and multi-repo behavior aligned unless their Git topology requires a real difference.
 - Keep `AGENTS.md` and `CLAUDE.md` identical.

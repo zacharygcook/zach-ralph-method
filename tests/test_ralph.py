@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -25,6 +26,8 @@ sys.modules[SPEC.name] = ralph
 SPEC.loader.exec_module(ralph)
 
 BUDGET_ARGS = (
+    "--reasoning-effort",
+    "medium",
     "--max-sprint-iterations",
     "30",
     "--max-chunk-iterations",
@@ -117,6 +120,27 @@ def create_sprint(root: Path, name: str = "1-demo", repo: str | None = None) -> 
 
 
 class RalphRuntimeTest(unittest.TestCase):
+    def test_guided_onboarding_suggests_models_reasoning_and_budget_ranges(self) -> None:
+        with (
+            mock.patch.object(ralph, "discover_harness_models", return_value=()),
+            mock.patch("builtins.input", side_effect=["1", "2", "5"]),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            self.assertEqual(ralph.prompt_model("codex"), "gpt-5.5")
+            self.assertEqual(ralph.prompt_reasoning("codex"), "high")
+            self.assertEqual(
+                ralph.prompt_positive_integer(
+                    "Maximum agent turns per chunk",
+                    ((3, "small"), (5, "balanced"), (8, "difficult")),
+                ),
+                5,
+            )
+        rendered = output.getvalue()
+        self.assertIn("gpt-5.4", rendered)
+        self.assertIn("excellent cost/capability balance", rendered)
+        self.assertIn("Reasoning effort suggestions", rendered)
+        self.assertIn("5 — balanced", rendered)
+
     def test_justfile_exposes_short_human_commands_from_project_root(self) -> None:
         just = shutil.which("just")
         if just is None:
@@ -162,11 +186,11 @@ class RalphRuntimeTest(unittest.TestCase):
 
     def test_builtin_harness_adapters_pass_explicit_model_and_current_flags(self) -> None:
         expected_arguments = {
-            "claude": ["--dangerously-skip-permissions", "--model", "test-model", "-p"],
-            "codex": ["exec", "--dangerously-bypass-approvals-and-sandbox", "--model", "test-model", "--json"],
+            "claude": ["--dangerously-skip-permissions", "--model", "test-model", "--effort", "high", "-p"],
+            "codex": ["exec", "--dangerously-bypass-approvals-and-sandbox", "--model", "test-model", "-c", "model_reasoning_effort=high", "--json"],
             "amp": ["--dangerously-allow-all", "--mode", "test-model", "--execute", "--stream-json"],
-            "opencode": ["run", "--auto", "--model", "test-model", "--format", "json"],
-            "droid": ["exec", "--auto", "high", "--model", "test-model", "-f"],
+            "opencode": ["run", "--auto", "--model", "test-model", "--variant", "high", "--format", "json"],
+            "droid": ["exec", "--auto", "high", "--model", "test-model", "--reasoning-effort", "high", "-f"],
         }
         common = ralph.TEMPLATES / "shared" / "ralph-common.sh.template"
         with tempfile.TemporaryDirectory() as directory:
@@ -197,6 +221,7 @@ class RalphRuntimeTest(unittest.TestCase):
                         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
                         "CAPTURE": str(capture),
                         "RALPH_AGENT_MODEL": "test-model",
+                        "RALPH_AGENT_REASONING": "high",
                     },
                 )
                 self.assertEqual(result.returncode, 0, f"{agent}: {result.stderr}")
@@ -290,13 +315,14 @@ class RalphRuntimeTest(unittest.TestCase):
             second = run_cli(
                 "init", "--repo", str(invalid_budget), "--agent", "codex",
                 "--model", "test-model", "--max-sprint-iterations", "30",
-                "--max-chunk-iterations", "0", "--disable-chunk-validation",
+                "--reasoning-effort", "medium", "--max-chunk-iterations", "0", "--disable-chunk-validation",
                 "--disable-sprint-validation",
             )
             self.assertNotEqual(first.returncode, 0)
             for option in (
                 "--agent",
                 "--model",
+                "--reasoning-effort",
                 "--max-sprint-iterations",
                 "--max-chunk-iterations",
             ):
@@ -317,11 +343,12 @@ class RalphRuntimeTest(unittest.TestCase):
         with (
             mock.patch("sys.stdin.isatty", return_value=True),
             mock.patch("sys.stdout.isatty", return_value=True),
-            mock.patch("builtins.input", side_effect=["codex", "chosen-model", "11", "2"]),
+            mock.patch("builtins.input", side_effect=["codex", "chosen-model", "high", "2", "11"]),
         ):
             ralph.resolve_init_operator_choices(arguments)
         self.assertEqual(arguments.agent, "codex")
         self.assertEqual(arguments.model, "chosen-model")
+        self.assertEqual(arguments.reasoning_effort, "high")
         self.assertEqual(arguments.max_sprint_iterations, 11)
         self.assertEqual(arguments.max_chunk_iterations, 2)
 
@@ -338,8 +365,9 @@ class RalphRuntimeTest(unittest.TestCase):
                     side_effect=[
                         "codex",
                         "chosen-model",
-                        "11",
+                        "high",
                         "2",
+                        "11",
                         "./scripts/fast-check.sh",
                         "./scripts/full-check.sh",
                     ],
@@ -361,6 +389,7 @@ class RalphRuntimeTest(unittest.TestCase):
             )
             self.assertEqual(config["RALPH_AGENT"], "")
             self.assertEqual(config["RALPH_AGENT_MODEL"], "")
+            self.assertEqual(config["RALPH_AGENT_REASONING"], "")
             self.assertEqual(config["MAX_SPRINT_ITERATIONS"], "")
             self.assertEqual(config["MAX_CHUNK_ITERATIONS"], "")
             loop = (ralph.TEMPLATES / mode / "loop.sh.template").read_text(
@@ -391,6 +420,7 @@ class RalphRuntimeTest(unittest.TestCase):
             for key in (
                 "RALPH_AGENT",
                 "RALPH_AGENT_MODEL",
+                "RALPH_AGENT_REASONING",
                 "MAX_SPRINT_ITERATIONS",
                 "MAX_CHUNK_ITERATIONS",
             ):
@@ -401,13 +431,14 @@ class RalphRuntimeTest(unittest.TestCase):
                 mock.patch("sys.stdout.isatty", return_value=True),
                 mock.patch(
                     "builtins.input",
-                    side_effect=["claude", "chosen-model", "12", "3"],
+                    side_effect=["claude", "chosen-model", "high", "3", "12"],
                 ),
             ):
                 ralph.install(arguments)
             config = ralph.parse_config(config_path)
             self.assertEqual(config["RALPH_AGENT"], "claude")
             self.assertEqual(config["RALPH_AGENT_MODEL"], "chosen-model")
+            self.assertEqual(config["RALPH_AGENT_REASONING"], "high")
             self.assertEqual(config["MAX_SPRINT_ITERATIONS"], "12")
             self.assertEqual(config["MAX_CHUNK_ITERATIONS"], "3")
 
@@ -467,6 +498,7 @@ class RalphRuntimeTest(unittest.TestCase):
             result = run_cli(
                 "upgrade", "--repo", str(repo),
                 "--model", "test-model",
+                "--reasoning-effort", "medium",
                 "--max-chunk-iterations", "5",
                 "--chunk-validation-command", "./scripts/test.sh",
             )
@@ -478,6 +510,7 @@ class RalphRuntimeTest(unittest.TestCase):
             self.assertNotIn("MAX_ITERATIONS=", text)
             values = ralph.parse_config(config)
             self.assertEqual(values["RALPH_AGENT_MODEL"], "test-model")
+            self.assertEqual(values["RALPH_AGENT_REASONING"], "medium")
             self.assertEqual(values["MAX_SPRINT_ITERATIONS"], "12")
             self.assertEqual(values["MAX_CHUNK_ITERATIONS"], "5")
             self.assertEqual(
@@ -545,6 +578,7 @@ class RalphRuntimeTest(unittest.TestCase):
             for key in (
                 "RALPH_AGENT",
                 "RALPH_AGENT_MODEL",
+                "RALPH_AGENT_REASONING",
                 "MAX_SPRINT_ITERATIONS",
                 "MAX_CHUNK_ITERATIONS",
             ):
@@ -555,6 +589,7 @@ class RalphRuntimeTest(unittest.TestCase):
             for option in (
                 "--agent",
                 "--model",
+                "--reasoning-effort",
                 "--max-sprint-iterations",
                 "--max-chunk-iterations",
             ):

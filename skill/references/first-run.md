@@ -9,7 +9,9 @@ Use when an operator has installed the skill but has not yet prepared or run a s
 - Confirm Bash, Git, `jq`, Python 3, and the configured coding-agent CLI are available.
 - Confirm `just` is available and the root `justfile` imports the bundled Ralph recipes without
   replacing existing project recipes.
-- Confirm the exact harness/model and positive sprint/per-chunk agent-turn budgets with the operator.
+- Confirm the exact harness/model, reasoning choice, and positive sprint/per-chunk agent-turn budgets
+  with the operator. Explain that 3/5/8 turns per chunk suit small/balanced/difficult work and that
+  15/30/60 total turns suit small/typical/large sprints; these are guidance, not hidden defaults.
 - Identify a fast repository-native command for every chunk and a comprehensive final command for the
   completed sprint. Do not invent placeholder validation that always passes.
 - If the spec or credible validation is missing, explain the gap and stop before autonomous setup.

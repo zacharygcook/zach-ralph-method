@@ -40,8 +40,10 @@ class DocumentationContractTest(unittest.TestCase):
         self.assertIn("Use $ralph-workflows to preflight", quick_start)
         self.assertIn("You do **not** manually create `.ralph/`", quick_start)
         self.assertIn("exact model", quick_start)
+        self.assertIn("reasoning effort", quick_start)
+        self.assertIn("GPT-5.5", readme)
         self.assertIn("maximum sprint turns", quick_start)
-        self.assertIn("maximum turns per chunk", quick_start)
+        self.assertIn("per-chunk turn budget", quick_start)
         self.assertIn("just run", quick_start)
         self.assertIn("Which workflow should I ask for?", quick_start)
 

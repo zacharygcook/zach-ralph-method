@@ -38,6 +38,67 @@ MODE_FILES = {
 }
 MODES = {"monorepo", "multi-repo"}
 AGENTS = {"amp", "claude", "codex", "droid", "opencode", "custom"}
+REASONING_AGENTS = {"claude", "codex", "droid", "opencode"}
+MODEL_SUGGESTIONS: dict[str, tuple[tuple[str, str], ...]] = {
+    "codex": (
+        ("gpt-5.5", "excellent cost/capability balance"),
+        ("gpt-5.6-terra", "strong general-purpose coding"),
+        ("gpt-5.6-sol", "deeper difficult work"),
+        ("gpt-5.4", "proven general-purpose option"),
+        ("gpt-5.3-codex", "coding-specialized option"),
+    ),
+    "claude": (
+        ("claude-opus-4-8", "highest-capability Opus option"),
+        ("claude-opus-4-8-fast", "faster Opus option"),
+        ("claude-fable-5", "Fable option"),
+        ("claude-sonnet-5", "current Sonnet option"),
+        ("claude-sonnet-4-6", "established Sonnet option"),
+    ),
+    "droid": (
+        ("claude-opus-4-8", "highest-capability Claude option"),
+        ("gpt-5.5", "excellent cost/capability balance"),
+        ("gpt-5.4", "proven general-purpose option"),
+        ("gpt-5.3-codex", "coding-specialized option"),
+        ("grok-4.5", "strong alternative model family"),
+    ),
+    "amp": (
+        ("smart", "Amp chooses the model and tools"),
+        ("deep", "more deliberate difficult work"),
+        ("rush", "fast iteration"),
+        ("large", "large-context work"),
+        ("free", "free-tier mode"),
+    ),
+}
+REASONING_SUGGESTIONS: dict[str, tuple[tuple[str, str], ...]] = {
+    "codex": (
+        ("medium", "balanced everyday work"),
+        ("high", "difficult debugging or architecture"),
+        ("low", "faster straightforward chunks"),
+        ("xhigh", "unusually hard problems"),
+        ("inherit", "explicitly use your Codex configuration"),
+    ),
+    "claude": (
+        ("high", "difficult implementation work"),
+        ("medium", "balanced everyday work"),
+        ("low", "faster straightforward chunks"),
+        ("xhigh", "very difficult problems"),
+        ("max", "maximum supported effort"),
+        ("inherit", "explicitly use your Claude configuration"),
+    ),
+    "droid": (
+        ("medium", "balanced everyday work when supported"),
+        ("high", "difficult implementation work"),
+        ("low", "faster straightforward chunks when supported"),
+        ("xhigh", "very difficult problems when supported"),
+        ("inherit", "explicitly use the selected model's default"),
+    ),
+    "opencode": (
+        ("medium", "balanced provider variant when available"),
+        ("high", "deeper provider variant when available"),
+        ("low", "faster provider variant when available"),
+        ("inherit", "explicitly use the configured provider variant"),
+    ),
+}
 
 
 class RalphError(ValueError):
@@ -53,7 +114,90 @@ def prompt_choice(label: str, choices: set[str]) -> str:
         print(f"Choose one of: {ordered}", file=sys.stderr)
 
 
-def prompt_positive_integer(label: str) -> int:
+def prompt_recommended_value(
+    label: str, suggestions: tuple[tuple[str, str], ...]
+) -> str:
+    print(f"\n{label} suggestions:")
+    for index, (value, description) in enumerate(suggestions, 1):
+        print(f"  {index}. {value} — {description}")
+    print("  Or type another exact value.")
+    while True:
+        value = input(f"{label}: ").strip()
+        if value.isdigit() and 1 <= int(value) <= len(suggestions):
+            return suggestions[int(value) - 1][0]
+        if value:
+            return value
+        print("Choose a number or type an exact value.", file=sys.stderr)
+
+
+def discover_harness_models(agent: str) -> tuple[str, ...]:
+    """Best-effort local discovery; onboarding never depends on it succeeding."""
+    if not shutil.which(agent):
+        return ()
+    try:
+        if agent == "droid":
+            command = ["droid", "exec", "--help"]
+        elif agent == "opencode":
+            command = ["opencode", "models"]
+        else:
+            return ()
+        result = subprocess.run(
+            command, check=False, capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ()
+    output = result.stdout + "\n" + result.stderr
+    if agent == "opencode":
+        return tuple(
+            line.split()[0]
+            for line in output.splitlines()
+            if line.strip() and "/" in line.split()[0]
+        )
+    available = output.partition("Available Models:")[2].partition("Model details:")[0]
+    return tuple(
+        line.split()[0]
+        for line in available.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+
+def model_suggestions(agent: str) -> tuple[tuple[str, str], ...]:
+    curated = MODEL_SUGGESTIONS.get(agent, ())
+    discovered = discover_harness_models(agent)
+    if not discovered:
+        return curated
+    discovered_set = set(discovered)
+    suggestions = [item for item in curated if item[0] in discovered_set]
+    known = {value for value, _ in suggestions}
+    suggestions.extend(
+        (value, "available from the installed harness")
+        for value in discovered
+        if value not in known
+    )
+    return tuple(suggestions[:5])
+
+
+def prompt_model(agent: str) -> str:
+    noun = "Amp mode" if agent == "amp" else "Model"
+    suggestions = model_suggestions(agent)
+    if suggestions:
+        return prompt_recommended_value(noun, suggestions)
+    return input(f"Exact {noun.lower()}: ").strip()
+
+
+def prompt_reasoning(agent: str) -> str:
+    return prompt_recommended_value(
+        "Reasoning effort", REASONING_SUGGESTIONS[agent]
+    )
+
+
+def prompt_positive_integer(
+    label: str, guidance: tuple[tuple[int, str], ...] = ()
+) -> int:
+    if guidance:
+        print(f"\n{label} guidance:")
+        for value, description in guidance:
+            print(f"  {value} — {description}")
     while True:
         value = input(f"{label}: ").strip()
         if value.isdigit() and int(value) > 0:
@@ -104,6 +248,8 @@ def resolve_init_operator_choices(arguments: argparse.Namespace) -> None:
         missing.append("--agent")
     if arguments.agent != "custom" and not arguments.model:
         missing.append("--model")
+    if (not arguments.agent or arguments.agent in REASONING_AGENTS) and not arguments.reasoning_effort:
+        missing.append("--reasoning-effort")
     if arguments.max_sprint_iterations is None:
         missing.append("--max-sprint-iterations")
     if arguments.max_chunk_iterations is None:
@@ -118,55 +264,74 @@ def resolve_init_operator_choices(arguments: argparse.Namespace) -> None:
     if not arguments.agent:
         arguments.agent = prompt_choice("Agent harness", AGENTS)
     if arguments.agent != "custom" and not arguments.model:
-        arguments.model = input("Exact model: ").strip()
+        arguments.model = prompt_model(arguments.agent)
         if not arguments.model:
             raise RalphError("An explicit model is required for a standard harness")
-    if arguments.max_sprint_iterations is None:
-        arguments.max_sprint_iterations = prompt_positive_integer(
-            "Maximum agent turns for the sprint"
-        )
+    if arguments.agent in REASONING_AGENTS and not arguments.reasoning_effort:
+        arguments.reasoning_effort = prompt_reasoning(arguments.agent)
     if arguments.max_chunk_iterations is None:
         arguments.max_chunk_iterations = prompt_positive_integer(
-            "Maximum agent turns per chunk"
+            "Maximum agent turns per chunk",
+            (
+                (3, "small, sharply scoped chunks"),
+                (5, "balanced starting point"),
+                (8, "difficult refactors or uncertain work"),
+            ),
+        )
+    if arguments.max_sprint_iterations is None:
+        arguments.max_sprint_iterations = prompt_positive_integer(
+            "Maximum agent turns across the sprint",
+            (
+                (15, "small sprint"),
+                (30, "typical sprint"),
+                (60, "large or exploratory sprint"),
+            ),
         )
 
 
 def resolve_upgrade_operator_choices(
     agent: str,
     model: str,
+    reasoning_effort: str,
     max_sprint_iterations: int | str | None,
     max_chunk_iterations: int | str | None,
-) -> tuple[str, str, int | str, int | str]:
+) -> tuple[str, str, str, int | str, int | str]:
     """Repair incomplete stored operator intent without inventing values."""
     missing = []
     if agent not in AGENTS:
         missing.append("--agent")
     if agent != "custom" and not model:
         missing.append("--model")
+    if (agent not in AGENTS or agent in REASONING_AGENTS) and not reasoning_effort:
+        missing.append("--reasoning-effort")
     if max_sprint_iterations is None or str(max_sprint_iterations) == "":
         missing.append("--max-sprint-iterations")
     if max_chunk_iterations is None or str(max_chunk_iterations) == "":
         missing.append("--max-chunk-iterations")
     if not missing:
-        return agent, model, max_sprint_iterations, max_chunk_iterations
+        return agent, model, reasoning_effort, max_sprint_iterations, max_chunk_iterations
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         raise RalphError("Missing operator choices for upgrade: " + ", ".join(missing))
     print("Configure missing Ralph operator controls. No choices are assumed.")
     if agent not in AGENTS:
         agent = prompt_choice("Agent harness", AGENTS)
     if agent != "custom" and not model:
-        model = input("Exact model: ").strip()
+        model = prompt_model(agent)
         if not model:
             raise RalphError("An explicit model is required for a standard harness")
-    if max_sprint_iterations is None or str(max_sprint_iterations) == "":
-        max_sprint_iterations = prompt_positive_integer(
-            "Maximum agent turns for the sprint"
-        )
+    if agent in REASONING_AGENTS and not reasoning_effort:
+        reasoning_effort = prompt_reasoning(agent)
     if max_chunk_iterations is None or str(max_chunk_iterations) == "":
         max_chunk_iterations = prompt_positive_integer(
-            "Maximum agent turns per chunk"
+            "Maximum agent turns per chunk",
+            ((3, "small chunks"), (5, "balanced"), (8, "difficult chunks")),
         )
-    return agent, model, max_sprint_iterations, max_chunk_iterations
+    if max_sprint_iterations is None or str(max_sprint_iterations) == "":
+        max_sprint_iterations = prompt_positive_integer(
+            "Maximum agent turns across the sprint",
+            ((15, "small sprint"), (30, "typical sprint"), (60, "large sprint")),
+        )
+    return agent, model, reasoning_effort, max_sprint_iterations, max_chunk_iterations
 
 
 def sha256(path: Path) -> str:
@@ -204,6 +369,11 @@ def render_config(arguments: argparse.Namespace) -> str:
         {
             "RALPH_AGENT": arguments.agent,
             "RALPH_AGENT_MODEL": shell_value(arguments.model or ""),
+            "RALPH_AGENT_REASONING": shell_value(
+                arguments.reasoning_effort
+                if arguments.agent in REASONING_AGENTS
+                else ("owned-by-amp-mode" if arguments.agent == "amp" else "custom-command")
+            ),
             "RALPH_AGENT_COMMAND": shell_value(arguments.agent_command or ""),
             "MAX_SPRINT_ITERATIONS": str(arguments.max_sprint_iterations),
             "MAX_CHUNK_ITERATIONS": str(arguments.max_chunk_iterations),
@@ -283,6 +453,10 @@ def install(arguments: argparse.Namespace) -> Path:
     resolve_init_operator_choices(arguments)
     if arguments.agent != "custom" and not arguments.model:
         raise RalphError("New runtimes require --model for the selected agent harness")
+    if arguments.agent in REASONING_AGENTS and not arguments.reasoning_effort:
+        raise RalphError(
+            "New runtimes require --reasoning-effort for the selected agent harness"
+        )
     if arguments.max_sprint_iterations < 1 or arguments.max_chunk_iterations < 1:
         raise RalphError("Iteration budgets must be positive integers")
     chunk_enabled = not arguments.disable_chunk_validation
@@ -405,6 +579,10 @@ def upgrade(arguments: argparse.Namespace) -> Path:
     )
     model = arguments.model or config.get("RALPH_AGENT_MODEL", "")
     agent = arguments.agent or config.get("RALPH_AGENT", "")
+    reasoning_effort = (
+        arguments.reasoning_effort
+        or config.get("RALPH_AGENT_REASONING", "")
+    )
     max_sprint_iterations = (
         arguments.max_sprint_iterations
         if arguments.max_sprint_iterations is not None
@@ -416,9 +594,13 @@ def upgrade(arguments: argparse.Namespace) -> Path:
         if arguments.max_chunk_iterations is not None
         else config.get("MAX_CHUNK_ITERATIONS")
     )
-    agent, model, max_sprint_iterations, max_chunk_iterations = (
+    agent, model, reasoning_effort, max_sprint_iterations, max_chunk_iterations = (
         resolve_upgrade_operator_choices(
-            agent, model, max_sprint_iterations, max_chunk_iterations
+            agent,
+            model,
+            reasoning_effort,
+            max_sprint_iterations,
+            max_chunk_iterations,
         )
     )
     for label, value in (
@@ -476,6 +658,11 @@ def upgrade(arguments: argparse.Namespace) -> Path:
             "RALPH_MODE": mode,
             "RALPH_AGENT": agent,
             "RALPH_AGENT_MODEL": shell_value(model),
+            "RALPH_AGENT_REASONING": shell_value(
+                reasoning_effort
+                if agent in REASONING_AGENTS
+                else ("owned-by-amp-mode" if agent == "amp" else "custom-command")
+            ),
             "MAX_SPRINT_ITERATIONS": str(max_sprint_iterations),
             "MAX_CHUNK_ITERATIONS": str(max_chunk_iterations),
             "RALPH_CHUNK_VALIDATION_ENABLED": chunk_enabled,
@@ -768,6 +955,23 @@ def validate(repo: Path) -> dict[str, Any]:
                 "detail": config.get("RALPH_AGENT_MODEL") or "owned by custom command",
             }
         )
+    if agent in REASONING_AGENTS and not config.get("RALPH_AGENT_REASONING"):
+        findings.append(
+            {
+                "status": "fail",
+                "check": "agent-reasoning",
+                "detail": "selected harness requires explicit RALPH_AGENT_REASONING",
+            }
+        )
+    elif agent:
+        findings.append(
+            {
+                "status": "pass",
+                "check": "agent-reasoning",
+                "detail": config.get("RALPH_AGENT_REASONING")
+                or ("owned by Amp mode" if agent == "amp" else "owned by custom command"),
+            }
+        )
     for key in ("MAX_SPRINT_ITERATIONS", "MAX_CHUNK_ITERATIONS"):
         raw_budget = config.get(key, "")
         valid_budget = raw_budget.isdigit() and int(raw_budget) > 0
@@ -866,6 +1070,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--primary-repo")
     init_parser.add_argument("--agent", choices=sorted(AGENTS))
     init_parser.add_argument("--model")
+    init_parser.add_argument("--reasoning-effort")
     init_parser.add_argument(
         "--agent-command",
         help="Trusted custom shell command; receives RALPH_PROMPT_FILE and RALPH_PROJECT_ROOT.",
@@ -891,6 +1096,7 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade_parser.add_argument("--repo", type=Path, default=Path.cwd())
     upgrade_parser.add_argument("--agent", choices=sorted(AGENTS))
     upgrade_parser.add_argument("--model")
+    upgrade_parser.add_argument("--reasoning-effort")
     upgrade_parser.add_argument("--max-sprint-iterations", type=int)
     upgrade_parser.add_argument("--max-chunk-iterations", type=int)
     upgrade_parser.add_argument("--chunk-validation-command")
@@ -922,6 +1128,7 @@ def main() -> int:
             print(
                 f"Harness={config.get('RALPH_AGENT') or 'unset'} "
                 f"model={config.get('RALPH_AGENT_MODEL') or 'custom-command'} "
+                f"reasoning={config.get('RALPH_AGENT_REASONING') or 'unset'} "
                 f"sprint-turns={config.get('MAX_SPRINT_ITERATIONS') or 'unset'} "
                 f"chunk-turns={config.get('MAX_CHUNK_ITERATIONS') or 'unset'}"
             )

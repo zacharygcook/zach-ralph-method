@@ -47,8 +47,9 @@ new project `justfile`. Then initialize interactively:
 just init
 ```
 
-The setup asks for the harness, exact model, sprint and per-chunk turn budgets, fast chunk validation,
-and comprehensive sprint validation. It does not guess operator choices.
+The setup suggests strong models for the selected harness, asks for reasoning effort, explains useful
+turn-budget ranges, then collects fast chunk and comprehensive sprint validation. It never hides an
+operator choice behind a default.
 
 ### Everyday commands
 
@@ -103,7 +104,8 @@ Ask your coding agent:
 ```text
 Use $ralph-workflows to preflight this repository for a Ralph loop. Read SPEC.md and the repository's
 agent instructions. Identify the fast chunk-validation command and comprehensive sprint-validation
-command. Confirm the harness, exact model, maximum sprint turns, and maximum turns per chunk with me.
+command. Confirm the harness, exact model, reasoning effort, maximum sprint turns, and maximum turns
+per chunk with me.
 Initialize or upgrade .ralph, break the spec into dependency-ordered sprints, create only the first
 sprint, set CURRENT_SPRINT, validate the complete setup, and stop before running. Explain any blockers
 and summarize exactly what I should review.
@@ -120,7 +122,8 @@ validation commands. To ask the skill for a readiness check:
 
 ```text
 Use $ralph-workflows to inspect the current Ralph sprint and tell me whether it is safe and complete
-enough to run. Confirm the configured harness, model, sprint turn budget, and per-chunk turn budget.
+enough to run. Confirm the configured harness, model, reasoning effort, sprint turn budget, and
+per-chunk turn budget.
 Do not start the loop.
 ```
 
@@ -159,7 +162,9 @@ rerunning completed post-sprint hooks.
 ## Supported agent harnesses
 
 The generated runtime supports Claude Code, Codex, Droid, Amp, OpenCode, and a trusted custom
-command. The selected model is never implicit:
+command. Interactive setup offers a short researched model list—including GPT-5.5 and GPT-5.4 for
+Codex—while always accepting another exact value. Droid and OpenCode suggestions use locally
+available models when their CLIs expose them.
 
 | Harness | `RALPH_AGENT_MODEL` meaning |
 | --- | --- |
@@ -167,6 +172,11 @@ command. The selected model is never implicit:
 | OpenCode | Provider/model value passed through `--model`. |
 | Amp | Amp mode passed through `--mode` (`deep`, `free`, `large`, `rush`, or `smart`). |
 | Custom command | Exported as `RALPH_AGENT_MODEL`; the command owns how to use it. |
+
+Reasoning is explicit too. Ralph maps it to Claude `--effort`, Codex
+`model_reasoning_effort`, Droid `--reasoning-effort`, or OpenCode `--variant`. Choosing `inherit` is
+an explicit decision to use that harness's configuration. Amp's selected mode owns its reasoning
+behavior; custom commands receive `RALPH_AGENT_REASONING`.
 
 CLI flags evolve, so adapter argument construction is regression-tested and `RALPH_AGENT_COMMAND`
 provides an immediate escape hatch without changing the orchestrator.
@@ -208,7 +218,7 @@ pre-commit hook for earlier feedback, but Ralph's independent gate remains autho
 Agents and scripts can bypass the interactive recipes by passing every decision explicitly:
 
 ```bash
-./.agents/skills/ralph-workflows/scripts/ralph init --repo . --agent "your harness" --model "your model" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+./.agents/skills/ralph-workflows/scripts/ralph init --repo . --agent "your harness" --model "your model" --reasoning-effort "your reasoning" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
 ./.agents/skills/ralph-workflows/scripts/ralph upgrade --repo .
 ./.agents/skills/ralph-workflows/scripts/ralph validate --repo .
 ./.ralph/loop.sh --resume

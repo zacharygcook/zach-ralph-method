@@ -46,7 +46,7 @@ into a shared parent containing two or more independent child Git repositories a
 
 6. Ensure safety and portability:
 
-   - the harness and exact model are explicit for standard adapters
+   - the harness, exact model, and reasoning choice are explicit for standard adapters
    - sprint and per-chunk agent-turn budgets are positive and operator-reviewed
    - broad auto-commit is disabled
    - project-specific chunk/sprint/E2E commands live in `config.env`, not the runtime

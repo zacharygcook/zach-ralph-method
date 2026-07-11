@@ -146,6 +146,7 @@ run_agent() {
   local prompt_file="${2:-}"
   local project_root="${3:-$PWD}"
   local model="${RALPH_AGENT_MODEL:-}"
+  local reasoning="${RALPH_AGENT_REASONING:-}"
 
   [[ -f "$prompt_file" ]] || { echo "Prompt file not found: $prompt_file"; return 14; }
 
@@ -153,6 +154,7 @@ run_agent() {
     export RALPH_PROMPT_FILE="$prompt_file"
     export RALPH_PROJECT_ROOT="$project_root"
     export RALPH_AGENT_MODEL="$model"
+    export RALPH_AGENT_REASONING="$reasoning"
     (cd "$project_root" && bash -lc "$RALPH_AGENT_COMMAND")
     return $?
   fi
@@ -165,12 +167,21 @@ run_agent() {
   case "$agent" in
     claude)
       require_commands claude || return 12
-      (cd "$project_root" && claude --dangerously-skip-permissions --model "$model" -p "$(cat "$prompt_file")" \
-        --output-format=stream-json --include-partial-messages --verbose)
+      if [[ "$reasoning" == "inherit" ]]; then
+        (cd "$project_root" && claude --dangerously-skip-permissions --model "$model" -p "$(cat "$prompt_file")" \
+          --output-format=stream-json --include-partial-messages --verbose)
+      else
+        (cd "$project_root" && claude --dangerously-skip-permissions --model "$model" --effort "$reasoning" -p "$(cat "$prompt_file")" \
+          --output-format=stream-json --include-partial-messages --verbose)
+      fi
       ;;
     codex)
       require_commands codex || return 12
-      (cd "$project_root" && codex exec --dangerously-bypass-approvals-and-sandbox --model "$model" --json "$(cat "$prompt_file")")
+      if [[ "$reasoning" == "inherit" ]]; then
+        (cd "$project_root" && codex exec --dangerously-bypass-approvals-and-sandbox --model "$model" --json "$(cat "$prompt_file")")
+      else
+        (cd "$project_root" && codex exec --dangerously-bypass-approvals-and-sandbox --model "$model" -c "model_reasoning_effort=$reasoning" --json "$(cat "$prompt_file")")
+      fi
       ;;
     amp)
       require_commands amp || return 12
@@ -178,11 +189,19 @@ run_agent() {
       ;;
     opencode)
       require_commands opencode || return 12
-      (cd "$project_root" && opencode run --auto --model "$model" --format json "$(cat "$prompt_file")")
+      if [[ "$reasoning" == "inherit" ]]; then
+        (cd "$project_root" && opencode run --auto --model "$model" --format json "$(cat "$prompt_file")")
+      else
+        (cd "$project_root" && opencode run --auto --model "$model" --variant "$reasoning" --format json "$(cat "$prompt_file")")
+      fi
       ;;
     droid)
       require_commands droid || return 12
-      (cd "$project_root" && droid exec --auto high --model "$model" -f "$prompt_file")
+      if [[ "$reasoning" == "inherit" ]]; then
+        (cd "$project_root" && droid exec --auto high --model "$model" -f "$prompt_file")
+      else
+        (cd "$project_root" && droid exec --auto high --model "$model" --reasoning-effort "$reasoning" -f "$prompt_file")
+      fi
       ;;
     *)
       echo "Unknown or missing RALPH_AGENT: ${agent:-none}; configure RALPH_AGENT_COMMAND for another client"

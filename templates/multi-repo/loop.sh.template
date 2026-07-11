@@ -15,6 +15,7 @@ MAX_SPRINT_ITERATIONS="${MAX_SPRINT_ITERATIONS:-}"
 MAX_CHUNK_ITERATIONS="${MAX_CHUNK_ITERATIONS:-}"
 AGENT="${RALPH_AGENT:-}"
 MODEL="${RALPH_AGENT_MODEL:-}"
+REASONING="${RALPH_AGENT_REASONING:-}"
 CURRENT_SPRINT="${CURRENT_SPRINT:-}"
 REPOS="${RALPH_REPOS:-${REPOS:-api frontend}}"
 PRIMARY_REPO="${RALPH_PRIMARY_REPO:-${PRIMARY_REPO:-api}}"
@@ -58,6 +59,10 @@ if [[ "$AGENT" == "custom" && -z "${RALPH_AGENT_COMMAND:-}" ]]; then
 fi
 if [[ "$AGENT" != "custom" && -z "$MODEL" ]]; then
   echo "RALPH_AGENT_MODEL is required for the $AGENT harness"
+  exit 12
+fi
+if [[ "$AGENT" =~ ^(claude|codex|droid|opencode)$ && -z "$REASONING" ]]; then
+  echo "RALPH_AGENT_REASONING is required for the $AGENT harness"
   exit 12
 fi
 if [[ "$CHUNK_VALIDATION_ENABLED" == "true" && -z "$CHUNK_VALIDATION_COMMAND" ]]; then
@@ -565,15 +570,15 @@ run_agent_with_watchdog() {
 }
 
 # ── Main Loop ──────────────────────────────────────────────
-echo "Starting Ralph loop (multi-repo): agent=$AGENT, model=${MODEL:-custom-command}"
+echo "Starting Ralph loop (multi-repo): agent=$AGENT, model=${MODEL:-custom-command}, reasoning=${REASONING:-harness-owned}"
 echo "Turn budgets: sprint=$MAX_SPRINT_ITERATIONS, per-chunk=$MAX_CHUNK_ITERATIONS"
 echo "Sprint: $CURRENT_SPRINT"
 echo "Repos: $REPOS"
 echo "Project root: $PROJECT_ROOT"
 echo "Logs: $LOG_DIR"
 echo "---"
-log_orchestrator "loop_started: agent=$AGENT model=${MODEL:-custom-command} sprint=$CURRENT_SPRINT repos=$REPOS max_sprint_iterations=$MAX_SPRINT_ITERATIONS max_chunk_iterations=$MAX_CHUNK_ITERATIONS resume=$RESUME force_hooks=$FORCE_HOOKS"
-log_event "loop" "started" "agent=$AGENT model=${MODEL:-custom-command} sprint=$CURRENT_SPRINT"
+log_orchestrator "loop_started: agent=$AGENT model=${MODEL:-custom-command} reasoning=${REASONING:-harness-owned} sprint=$CURRENT_SPRINT repos=$REPOS max_sprint_iterations=$MAX_SPRINT_ITERATIONS max_chunk_iterations=$MAX_CHUNK_ITERATIONS resume=$RESUME force_hooks=$FORCE_HOOKS"
+log_event "loop" "started" "agent=$AGENT model=${MODEL:-custom-command} reasoning=${REASONING:-harness-owned} sprint=$CURRENT_SPRINT"
 
 ensure_manifest_schema
 

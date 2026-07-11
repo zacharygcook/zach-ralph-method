@@ -11,8 +11,8 @@ Operate an autonomous implementation loop as a resumable state machine, not a on
 
 When a user asks how to start, preflight the repository instead of explaining sprint internals first:
 
-1. Confirm a Git repository; Bash, Git, `jq`, and Python 3; an explicit harness and model (or a fully
-   owned custom command); positive sprint and per-chunk turn budgets; a durable `SPEC.md` or
+1. Confirm a Git repository; Bash, Git, `jq`, and Python 3; an explicit harness, model, and reasoning
+   choice (or a fully owned custom command); positive sprint and per-chunk turn budgets; a durable `SPEC.md` or
    equivalent; and credible fast chunk plus comprehensive sprint validation commands. Node.js/npm
    and `npx` are required when the skill still needs to be installed or updated.
 2. Read repository agent instructions and the spec before choosing commands or planning work.
@@ -69,18 +69,18 @@ not run arbitrary lifecycle hooks.
 Install the bundled hardened Bash runtime only when the user asks to initialize or repair Ralph:
 
 ```bash
-<skill-dir>/scripts/ralph init --repo <repository> --agent <agent> --model '<model>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
+<skill-dir>/scripts/ralph init --repo <repository> --agent <agent> --model '<model>' --reasoning-effort '<effort>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
 ```
 
 For a parent directory containing independent child Git repositories, use multi-repo mode:
 
 ```bash
-<skill-dir>/scripts/ralph init --repo <parent> --mode multi-repo --repos <repo-a> <repo-b> --primary-repo <repo-a> --agent <agent> --model '<model>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast cross-repo command>' --sprint-validation-command '<full cross-repo command>'
+<skill-dir>/scripts/ralph init --repo <parent> --mode multi-repo --repos <repo-a> <repo-b> --primary-repo <repo-a> --agent <agent> --model '<model>' --reasoning-effort '<effort>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast cross-repo command>' --sprint-validation-command '<full cross-repo command>'
 ```
 
 Initialization is non-destructive: when `.ralph/` already exists, `init` enters the same safe upgrade
-path as `upgrade` and preserves configuration and sprint state. Harness, model, sprint turn budget,
-and per-chunk turn budget are operator choices with no defaults. Interactive initialization and
+path as `upgrade` and preserves configuration and sprint state. Harness, model, reasoning effort,
+sprint turn budget, and per-chunk turn budget are operator choices with no defaults. Interactive initialization and
 upgrade prompt for missing choices; noninteractive callers must pass them explicitly. Disable a hook
 explicitly when it is genuinely outside the repository's workflow; skipped hooks remain visible in
 the manifest.
