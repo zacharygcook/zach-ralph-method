@@ -12,15 +12,25 @@ source "$SCRIPT_DIR/lib/ralph-common.sh"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 MAX_ITERATIONS="${MAX_ITERATIONS:-30}"
-AGENT="${AGENT:-claude}"
+AGENT="${RALPH_AGENT:-${AGENT:-}}"
 CURRENT_SPRINT="${CURRENT_SPRINT:-}"
-REPOS="${REPOS:-api frontend}"
-PRIMARY_REPO="${PRIMARY_REPO:-api}"
+REPOS="${RALPH_REPOS:-${REPOS:-api frontend}}"
+PRIMARY_REPO="${RALPH_PRIMARY_REPO:-${PRIMARY_REPO:-api}}"
 HEARTBEAT_SEC="${HEARTBEAT_SEC:-30}"
 AGENT_IDLE_TIMEOUT_SEC="${AGENT_IDLE_TIMEOUT_SEC:-0}"
 POST_RESULT_IDLE_SEC="${POST_RESULT_IDLE_SEC:-45}"
 RALPH_INTERACTIVE="${RALPH_INTERACTIVE:-false}"
 RALPH_INTERACTIVE_TIMEOUT_SEC="${RALPH_INTERACTIVE_TIMEOUT_SEC:-20}"
+
+missing=$(require_commands bash git jq python3 || true)
+if [[ -n "$missing" ]]; then
+  echo "$missing"
+  exit 12
+fi
+if [[ "${RALPH_UNATTENDED_APPROVED:-false}" != "true" ]]; then
+  echo "Refusing autonomous execution until RALPH_UNATTENDED_APPROVED=true in .ralph/config.env"
+  exit 14
+fi
 
 # ── CLI Flags ──────────────────────────────────────────────
 RESUME=false
@@ -51,8 +61,12 @@ fi
 
 # Validate repos exist
 for repo in $REPOS; do
+  if [[ ! "$repo" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Error: Invalid repository directory name: $repo"
+    exit 14
+  fi
   REPO_PATH="$PROJECT_ROOT/$repo"
-  if [[ ! -d "$REPO_PATH/.git" ]]; then
+  if [[ ! -e "$REPO_PATH/.git" ]]; then
     echo "Error: Repo not found or not a git repo: $REPO_PATH"
     exit 1
   fi
@@ -81,15 +95,19 @@ log_event() {
 # ── Multi-Repo Helpers ─────────────────────────────────────
 get_repo_commit() {
   local repo="$1"
-  cd "$PROJECT_ROOT/$repo" && git rev-parse HEAD 2>/dev/null || echo "unknown"
+  git -C "$PROJECT_ROOT/$repo" rev-parse HEAD 2>/dev/null || echo "unknown"
 }
 
 backup_commit_all_repos() {
   local msg="$1"
+  if [[ "${RALPH_AUTO_COMMIT:-false}" == "true" ]]; then
+    echo "Refusing RALPH_AUTO_COMMIT=true; use RALPH_AUTO_COMMIT=I_ACCEPT_GIT_ADD_ALL to acknowledge broad staging"
+    return 14
+  fi
+  [[ "${RALPH_AUTO_COMMIT:-false}" == "I_ACCEPT_GIT_ADD_ALL" ]] || return 0
   for repo in $REPOS; do
-    cd "$PROJECT_ROOT/$repo"
-    git add -A
-    git commit -m "$msg" -q 2>/dev/null || true
+    git -C "$PROJECT_ROOT/$repo" add -A
+    git -C "$PROJECT_ROOT/$repo" commit -m "$msg" -q 2>/dev/null || true
   done
 }
 
@@ -161,7 +179,7 @@ if [[ ! -f "$MANIFEST_FILE" ]] || ! jq -e '.repos' "$MANIFEST_FILE" >/dev/null 2
       "reason": null,
       "phases": {
         "generate_tests": {"status": "pending", "completed_at": null, "reason": null},
-        "verify_backend_tests": {"status": "pending", "completed_at": null, "reason": null},
+        "verify_tests": {"status": "pending", "completed_at": null, "reason": null},
         "run_e2e": {"status": "pending", "completed_at": null, "reason": null}
       }
     }
@@ -180,7 +198,8 @@ ensure_manifest_schema() {
     | .hooks.tests = (.hooks.tests // {"status":"pending","completed_at":null,"reason":null,"phases":{}})
     | .hooks.tests.phases = (.hooks.tests.phases // {})
     | .hooks.tests.phases.generate_tests = (.hooks.tests.phases.generate_tests // {"status":"pending","completed_at":null,"reason":null})
-    | .hooks.tests.phases.verify_backend_tests = (.hooks.tests.phases.verify_backend_tests // {"status":"pending","completed_at":null,"reason":null})
+    | .hooks.tests.phases.verify_tests = (.hooks.tests.phases.verify_tests // .hooks.tests.phases.verify_backend_tests // {"status":"pending","completed_at":null,"reason":null})
+    | del(.hooks.tests.phases.verify_backend_tests)
     | .hooks.tests.phases.run_e2e = (.hooks.tests.phases.run_e2e // {"status":"pending","completed_at":null,"reason":null})
   ' || {
     log_orchestrator "ERROR: Failed to normalize manifest schema"
@@ -206,11 +225,17 @@ passed_chunk_count() {
 
 # ── Next Sprint ────────────────────────────────────────────
 get_next_sprint() {
-  local current_num next_num
+  local current_num next_num candidate
   current_num=$(echo "$CURRENT_SPRINT" | grep -oE '^[0-9]+' || echo "")
   [[ -z "$current_num" ]] && return 0
   next_num=$((current_num + 1))
-  ls "$SCRIPT_DIR/sprints/" 2>/dev/null | grep "^${next_num}-" | head -1
+  for candidate in "$SCRIPT_DIR/sprints/${next_num}-"*; do
+    if [[ -d "$candidate" ]]; then
+      basename "$candidate"
+      return 0
+    fi
+  done
+  return 0
 }
 
 offer_next_sprint_prompt() {
@@ -225,9 +250,7 @@ offer_next_sprint_prompt() {
     if read -r -t "$RALPH_INTERACTIVE_TIMEOUT_SEC" -p "Auto-update config and continue? [y/N] " REPLY; then
       echo
       if [[ $REPLY =~ ^[Yy]$ ]]; then
-        sed -i "s/^CURRENT_SPRINT=.*/CURRENT_SPRINT=$next_sprint/" "$SCRIPT_DIR/config.env"
-        echo "Updated CURRENT_SPRINT to $next_sprint"
-        echo "Run ./loop.sh again to start."
+        echo "Set CURRENT_SPRINT=$next_sprint in $SCRIPT_DIR/config.env, then run ./loop.sh again."
       fi
     else
       echo
@@ -299,7 +322,7 @@ reconcile_completion_state() {
   echo "Running post-sprint hooks..."
   run_post_sprint_hooks || true
 
-  if jq -e '.hooks.review.status == "done" and .hooks.documentation.status == "done" and .hooks.tests.status == "done"' "$MANIFEST_FILE" >/dev/null 2>&1; then
+  if jq -e '([.hooks.review.status, .hooks.documentation.status, .hooks.tests.status] | all(. == "done" or . == "skipped"))' "$MANIFEST_FILE" >/dev/null 2>&1; then
     mark_hooks_phase_done || true
   fi
 }
@@ -335,8 +358,10 @@ stop_stream_sidecar() {
   kill_process_tree "$sidecar_pid"
   # Sidecar termination is expected after agent completion/kill.
   # Keep this function non-fatal under `set -e` and expose exit via variable.
+  set +e
   wait "$sidecar_pid" 2>/dev/null
   STOPPED_SIDECAR_EXIT=$?
+  set -e
   return 0
 }
 
@@ -355,33 +380,13 @@ start_agent_iteration() {
     amp|opencode|droid)
       formatter_path=""
       ;;
-    *)
-      echo "Unknown agent: $AGENT"
-      return 12
-      ;;
+    *) formatter_path="" ;;
   esac
 
   start_stream_sidecar "$formatter_path"
   sidecar_pid="$STARTED_SIDECAR_PID"
 
-  case "$AGENT" in
-    claude)
-      cd "$PROJECT_ROOT" && claude --dangerously-skip-permissions -p "$(cat "$PROMPT_FILE")" \
-        --output-format=stream-json --include-partial-messages --verbose >"$LOG_FILE" 2>&1 &
-      ;;
-    codex)
-      cd "$PROJECT_ROOT" && codex exec --yolo --json "$(cat "$PROMPT_FILE")" >"$LOG_FILE" 2>&1 &
-      ;;
-    amp)
-      cd "$PROJECT_ROOT" && amp run --autonomous --prompt-file "$PROMPT_FILE" >"$LOG_FILE" 2>&1 &
-      ;;
-    opencode)
-      cd "$PROJECT_ROOT" && opencode --auto --prompt "$PROMPT_FILE" >"$LOG_FILE" 2>&1 &
-      ;;
-    droid)
-      cd "$PROJECT_ROOT" && droid exec --auto high -f "$PROMPT_FILE" >"$LOG_FILE" 2>&1 &
-      ;;
-  esac
+  run_agent "$AGENT" "$PROMPT_FILE" "$PROJECT_ROOT" >"$LOG_FILE" 2>&1 &
   agent_pid=$!
   agent_pgid=$(process_pgid "$agent_pid")
 
@@ -516,7 +521,7 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
     echo "=========================================="
 
     # Backup commit in all repos
-    backup_commit_all_repos "ralph: chunk completed (iteration $i)"
+    backup_commit_all_repos "ralph: chunk completed (iteration $i)" || exit $?
 
     REPO_COMMITS=$(get_all_repo_commits)
     CHUNK_ID="$AFTER_PASS_COUNT"
@@ -551,7 +556,8 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
 
   # Check for blocked
   if grep -q "<blocked>" "$LOG_FILE"; then
-    REASON=$(grep -oP '(?<=<blocked>).*(?=</blocked>)' "$LOG_FILE" || echo "unknown")
+    REASON=$(sed -n 's/.*<blocked>\(.*\)<\/blocked>.*/\1/p' "$LOG_FILE" | head -1)
+    REASON="${REASON:-unknown}"
     echo "Agent blocked: $REASON"
     log_orchestrator "blocked: iteration=$i reason=$REASON"
     log_event "iteration" "blocked" "iteration=$i reason=$REASON"
@@ -561,7 +567,7 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
   manifest_update --argjson iter "$i" '.iterations = (if (.iterations // 0) < $iter then $iter else .iterations end)' || true
 
   # Backup commit for incomplete iterations
-  backup_commit_all_repos "ralph: iteration $i"
+  backup_commit_all_repos "ralph: iteration $i" || exit $?
 
   echo "Iteration $i complete, continuing..."
   log_orchestrator "iteration_complete: $i"

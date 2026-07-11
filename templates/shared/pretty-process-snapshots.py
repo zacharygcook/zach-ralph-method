@@ -42,9 +42,7 @@ def print_snapshot(timestamp: str, status: str, message: str) -> None:
             print(f"  {row}")
             continue
         pid, ppid, pgid, stat, elapsed, command = match.groups()
-        print(
-            f"  {pid:<6} {ppid:<6} {pgid:<6} {stat:<5} {elapsed:<8} {command}"
-        )
+        print(f"  {pid:<6} {ppid:<6} {pgid:<6} {stat:<5} {elapsed:<8} {command}")
     print()
 
 

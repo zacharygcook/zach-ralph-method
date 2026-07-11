@@ -1,164 +1,31 @@
 #!/usr/bin/env bash
-# Code Review Hook - Uses Codex for autonomous code review.
 
 set -euo pipefail
 
-SPRINT_DIR="$1"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SPRINT_DIR="${1:?Usage: review.sh <sprint-dir>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RALPH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$RALPH_DIR/.." && pwd)"
+source "$RALPH_DIR/config.env"
+source "$RALPH_DIR/lib/ralph-common.sh"
+
+if [[ "${RALPH_REVIEW_ENABLED:-true}" != "true" ]]; then
+  echo "Review hook disabled explicitly by RALPH_REVIEW_ENABLED=false"
+  exit 20
+fi
+
+require_commands git jq python3 || exit 12
 MANIFEST="$SPRINT_DIR/manifest.json"
-REVIEW_FILE="$SPRINT_DIR/REVIEW.md"
-REVIEW_LOG="$SPRINT_DIR/review.log"
+[[ -f "$MANIFEST" ]] || { echo "Missing manifest: $MANIFEST"; exit 14; }
 
-source "$SCRIPT_DIR/lib/ralph-common.sh"
+START_COMMIT=$(jq -r '.start_commit // empty' "$MANIFEST")
+END_COMMIT=$(jq -r '.end_commit // empty' "$MANIFEST")
+[[ -n "$START_COMMIT" && -n "$END_COMMIT" ]] || { echo "Manifest requires start_commit and end_commit"; exit 14; }
 
-EVENT_LOG="${RALPH_EVENT_LOG:-$SPRINT_DIR/hooks.events.jsonl}"
-EXIT_DEP_MISSING=12
-EXIT_VALIDATION=14
-HEARTBEAT_SEC="${HOOK_HEARTBEAT_SEC:-30}"
-POST_RESULT_IDLE_SEC="${POST_RESULT_IDLE_SEC:-45}"
+PROMPT_FILE="${RALPH_HOOK_RUNTIME_DIR:-$SPRINT_DIR}/review.prompt.md"
+{
+  cat "$RALPH_DIR/prompts/review.md"
+  printf '\n## Sprint context\n\n- Sprint directory: `%s`\n- Review range: `%s..%s`\n' "$SPRINT_DIR" "$START_COMMIT" "$END_COMMIT"
+} > "$PROMPT_FILE"
 
-log_event() {
-  append_event "$EVENT_LOG" "$1" "$2" "$3"
-}
-
-run_codex_stream_with_watchdog() {
-  local prompt="$1"
-  local log_file="$2"
-  local sidecar_pid codex_pid codex_pgid monitor_exit sidecar_exit
-
-  : > "$log_file"
-  (
-    tail -n +1 -f "$log_file" 2>/dev/null | python3 "$SCRIPT_DIR/format-codex-stream.py"
-  ) &
-  sidecar_pid=$!
-
-  codex exec --yolo --json "$prompt" >"$log_file" 2>&1 &
-  codex_pid=$!
-  codex_pgid=$(process_pgid "$codex_pid")
-
-  log_event "process" "spawned" "hook=review codex_pid=$codex_pid codex_pgid=${codex_pgid:-unknown} sidecar_pid=$sidecar_pid"
-
-  set +e
-  monitor_process_with_heartbeat \
-    "$codex_pid" \
-    "hook:review codex" \
-    "$log_file" \
-    "$HEARTBEAT_SEC" \
-    0 \
-    "$EVENT_LOG" \
-    "" \
-    "$POST_RESULT_IDLE_SEC" \
-    "$codex_pid,$sidecar_pid"
-  monitor_exit=$?
-  set -e
-
-  kill_process_tree "$sidecar_pid"
-  set +e
-  wait "$sidecar_pid" 2>/dev/null
-  sidecar_exit=$?
-  set -e
-
-  log_event "process" "closed" "hook=review codex_pid=$codex_pid sidecar_pid=$sidecar_pid sidecar_exit=$sidecar_exit monitor_exit=$monitor_exit"
-  return "$monitor_exit"
-}
-
-preflight() {
-  local missing
-  missing=$(require_commands jq codex python3 git || true)
-  if [[ -n "$missing" ]]; then
-    echo "$missing" | tee -a "$REVIEW_LOG"
-    log_event "review" "failed" "dependency_missing: $missing"
-    return "$EXIT_DEP_MISSING"
-  fi
-  return 0
-}
-
-if [[ ! -f "$MANIFEST" ]]; then
-  echo "ERROR: Manifest not found: $MANIFEST"
-  log_event "review" "failed" "manifest_missing"
-  exit "$EXIT_VALIDATION"
-fi
-
-preflight || exit $?
-
-START_COMMIT=$(jq -r '.start_commit' "$MANIFEST")
-END_COMMIT=$(jq -r '.end_commit' "$MANIFEST")
-SPRINT_NAME=$(jq -r '.sprint' "$MANIFEST")
-
-if [[ "$START_COMMIT" == "null" ]] || [[ "$END_COMMIT" == "null" ]]; then
-  if [[ "$START_COMMIT" == "null" ]]; then
-    echo "ERROR: Invalid manifest - missing start_commit"
-    log_event "review" "failed" "missing_start_commit"
-    exit "$EXIT_VALIDATION"
-  fi
-
-  END_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "null")
-  if [[ "$END_COMMIT" == "null" ]]; then
-    echo "ERROR: Invalid manifest - could not resolve end_commit"
-    log_event "review" "failed" "missing_end_commit"
-    exit "$EXIT_VALIDATION"
-  fi
-  echo "WARNING: Manifest missing end_commit; using HEAD ($END_COMMIT)"
-fi
-
-echo "Reviewing commits: $START_COMMIT..$END_COMMIT"
-log_event "review" "running" "commit_range=$START_COMMIT..$END_COMMIT"
-
-CHUNKS_FILE="$SPRINT_DIR/chunks.json"
-CHUNKS_CONTENT=""
-if [[ -f "$CHUNKS_FILE" ]]; then
-  CHUNKS_CONTENT=$(cat "$CHUNKS_FILE")
-fi
-
-REVIEW_PROMPT=$(cat "$SCRIPT_DIR/prompts/review.md")
-
-FULL_PROMPT=$(cat <<EOF_PROMPT
-$REVIEW_PROMPT
-
-## Sprint: $SPRINT_NAME
-
-## Commit Range to Review:
-Start: $START_COMMIT
-End: $END_COMMIT
-
-Use \`git diff $START_COMMIT..$END_COMMIT\` to see the changes.
-Use \`git log $START_COMMIT..$END_COMMIT --oneline\` to see commits.
-
-## Chunks Completed:
-\`\`\`json
-$CHUNKS_CONTENT
-\`\`\`
-
-## Output Instructions:
-1. Review the diff using git commands
-2. Write your review to: $REVIEW_FILE
-3. Fix ALL issues you find (critical, quality, and style)
-4. Document your reasoning for each fix in the review file
-5. Mark controversial fixes with: // REVIEW-FIX (CONTROVERSIAL): reason
-6. Commit fixes with message: "fix(review): apply code review fixes for sprint N"
-7. Do NOT add "Generated with" or "Co-Authored-By" lines to commits
-EOF_PROMPT
-)
-
-echo "Running Codex code review..."
-set +e
-cd "$PROJECT_ROOT" && run_codex_stream_with_watchdog "$FULL_PROMPT" "$REVIEW_LOG"
-REVIEW_EXIT=$?
-set -e
-
-if [[ "$REVIEW_EXIT" -ne 0 ]]; then
-  echo "WARNING: Codex review exited with non-zero status"
-  echo "Check log: $REVIEW_LOG"
-  log_event "review" "failed" "codex_exit=$REVIEW_EXIT"
-else
-  log_event "review" "ok" "codex_exit=0"
-fi
-
-if [[ -f "$REVIEW_FILE" ]]; then
-  echo "Review complete: $REVIEW_FILE"
-else
-  echo "WARNING: Review file not created at $REVIEW_FILE"
-fi
-
-exit "$REVIEW_EXIT"
+run_agent "${RALPH_REVIEW_AGENT:-${RALPH_AGENT:-}}" "$PROMPT_FILE" "$PROJECT_ROOT"

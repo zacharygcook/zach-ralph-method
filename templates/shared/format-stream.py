@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Format Claude stream-json output to look like the TUI."""
+
 import json
 import sys
 import os
@@ -17,10 +18,12 @@ RESET = "\033[0m"
 SUMMARY_LOG = os.environ.get("SUMMARY_LOG")
 summary_lines = []
 
+
 def log_summary(line):
     """Add a line to the summary log."""
     if SUMMARY_LOG:
         summary_lines.append(line)
+
 
 def write_summary():
     """Write summary log to file on exit."""
@@ -30,6 +33,7 @@ def write_summary():
                 f.write("\n".join(summary_lines) + "\n")
         except Exception as e:
             print(f"Warning: Could not write summary log: {e}", file=sys.stderr)
+
 
 atexit.register(write_summary)
 
@@ -88,7 +92,7 @@ for line in sys.stdin:
                         param_strs.append(f"{k}={v}")
                     # Log to summary
                     log_summary(f"TOOL: {current_tool} {' '.join(param_strs)[:100]}")
-                except:
+                except (TypeError, ValueError):
                     log_summary(f"TOOL: {current_tool}")
                 print()
             current_tool = None
@@ -104,14 +108,16 @@ for line in sys.stdin:
                 log_summary(f"  -> ERROR: {result_str[:80]}")
             else:
                 # Truncate long results
-                display = result_str[:97] + "..." if len(result_str) > 100 else result_str
+                display = (
+                    result_str[:97] + "..." if len(result_str) > 100 else result_str
+                )
                 print(f"  {GREEN}✓ {display}{RESET}")
                 log_summary(f"  -> OK: {result_str[:80]}")
 
     elif msg_type == "result":
         print()
         print(f"{DIM}{'─' * 60}{RESET}")
-        result_text = data.get('result', '')[:200]
+        result_text = data.get("result", "")[:200]
         print(f"{BOLD}Result:{RESET} {result_text}")
         cost = data.get("total_cost_usd", 0)
         duration = data.get("duration_ms", 0) / 1000

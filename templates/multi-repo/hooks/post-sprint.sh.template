@@ -18,8 +18,6 @@ HOOK_IDLE_TIMEOUT_SEC="${HOOK_IDLE_TIMEOUT_SEC:-0}"
 FORCE_HOOKS="${RALPH_FORCE_HOOKS:-0}"
 
 EXIT_OK=0
-EXIT_TIMEOUT=10
-EXIT_IDLE_TIMEOUT=11
 EXIT_DEP_MISSING=12
 EXIT_INTERRUPTED=13
 EXIT_VALIDATION=14
@@ -143,6 +141,7 @@ normalize_exit_reason() {
     12) echo "dependency_missing" ;;
     13) echo "interrupted" ;;
     14) echo "validation_failed" ;;
+    20) echo "disabled_by_config" ;;
     *) echo "failed" ;;
   esac
 }
@@ -154,19 +153,24 @@ run_hook() {
   local script_path="$4"
   local hook_log="$5"
 
-  local state_file lock_file pid exit_code reason prior_status
+  local state_file lock_file marker_file pid exit_code reason prior_status
   state_file=$(hook_state_file "$hook_key")
   lock_file=$(hook_lock_file "$hook_key")
+  marker_file="$SPRINT_DIR/.hook-${hook_key}.done"
 
   recover_stale_hook_state "$hook_key"
 
   prior_status=$(manifest_hook_status "$hook_key")
-  if [[ "$FORCE_HOOKS" != "1" ]] && [[ "$prior_status" == "done" ]]; then
+  if [[ "$FORCE_HOOKS" != "1" ]] && [[ "$prior_status" =~ ^(done|skipped)$ ]] && [[ -f "$marker_file" ]]; then
     echo "[$ordinal] Skipping $label (already completed)"
     record_hook_result "$hook_key" "done" "null"
     log_event "hook" "skipped" "$hook_key already completed"
     echo ""
     return 0
+  fi
+
+  if [[ "$FORCE_HOOKS" == "1" ]]; then
+    rm -f "$marker_file"
   fi
 
   if [[ ! -x "$script_path" ]]; then
@@ -200,8 +204,9 @@ run_hook() {
   (
     RALPH_HOOK_KEY="$hook_key" \
       RALPH_EVENT_LOG="$EVENT_LOG" \
+      RALPH_HOOK_RUNTIME_DIR="$HOOK_RUNTIME_DIR" \
       "$script_path" "$SPRINT_DIR"
-  ) &
+  ) > "$hook_log" 2>&1 &
   pid=$!
 
   jq -nc --arg hook "$hook_key" --arg ts "$(now_iso)" --argjson pid "$pid" \
@@ -224,6 +229,7 @@ run_hook() {
 
   if [[ "$exit_code" -eq 0 ]]; then
     record_hook_result "$hook_key" "done" "null"
+    touch "$marker_file"
     jq -nc --arg hook "$hook_key" --arg ts "$(now_iso)" --argjson pid "$pid" \
       '{hook:$hook,status:"done",pid:$pid,completed_at:$ts,last_heartbeat:$ts}' > "$state_file" 2>/dev/null || true
     log_event "hook" "ok" "$hook_key completed"
@@ -231,12 +237,26 @@ run_hook() {
     return 0
   fi
 
+  if [[ "$exit_code" -eq 20 ]]; then
+    record_hook_result "$hook_key" "skipped" "$reason"
+    touch "$marker_file"
+    jq -nc --arg hook "$hook_key" --arg ts "$(now_iso)" --argjson pid "$pid" --arg reason "$reason" \
+      '{hook:$hook,status:"skipped",pid:$pid,completed_at:$ts,reason:$reason,last_heartbeat:$ts}' > "$state_file" 2>/dev/null || true
+    log_event "hook" "skipped" "$hook_key disabled by configuration"
+    echo "[$ordinal] $label skipped by configuration"
+    echo ""
+    return 0
+  fi
+
   record_hook_result "$hook_key" "failed" "$reason"
+  rm -f "$marker_file"
   jq -nc --arg hook "$hook_key" --arg ts "$(now_iso)" --argjson pid "$pid" --arg reason "$reason" \
     '{hook:$hook,status:"failed",pid:$pid,failed_at:$ts,reason:$reason,last_heartbeat:$ts}' > "$state_file" 2>/dev/null || true
   log_event "hook" "failed" "$hook_key failed reason=$reason exit=$exit_code"
 
   echo "WARNING: $label failed (reason=$reason, exit=$exit_code), continuing..."
+  echo "Hook log: $hook_log"
+  tail -n 20 "$hook_log" 2>/dev/null || true
   echo ""
   return "$exit_code"
 }

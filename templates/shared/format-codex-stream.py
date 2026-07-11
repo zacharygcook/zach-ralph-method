@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Format Codex exec --json JSONL output for real-time visibility."""
+
 import json
 import sys
 import os
@@ -19,10 +20,12 @@ RESET = "\033[0m"
 SUMMARY_LOG = os.environ.get("SUMMARY_LOG")
 summary_lines = []
 
+
 def log_summary(line):
     """Add a line to the summary log."""
     if SUMMARY_LOG:
         summary_lines.append(line)
+
 
 def write_summary():
     """Write summary log to file on exit."""
@@ -33,22 +36,23 @@ def write_summary():
         except Exception as e:
             print(f"Warning: Could not write summary log: {e}", file=sys.stderr)
 
+
 atexit.register(write_summary)
 
 # Track state
 current_items = {}  # id -> item data
 thread_id = None
 
+
 def truncate(s, max_len=100):
     """Truncate string with ellipsis."""
-    s = str(s).replace('\n', ' ')
-    return s[:max_len-3] + "..." if len(s) > max_len else s
+    s = str(s).replace("\n", " ")
+    return s[: max_len - 3] + "..." if len(s) > max_len else s
+
 
 def format_item_start(item):
     """Format an item.started event."""
     item_type = item.get("type", "unknown")
-    item_id = item.get("id", "")
-
     if item_type == "command_execution":
         cmd = item.get("command", "")
         print(f"\n{CYAN}$ {cmd}{RESET}", flush=True)
@@ -73,6 +77,7 @@ def format_item_start(item):
         print(f"\n{CYAN}search: {query}{RESET}", end="", flush=True)
         log_summary(f"SEARCH: {truncate(query, 60)}")
 
+
 def format_item_update(item):
     """Format an item.updated event (streaming updates)."""
     item_type = item.get("type", "unknown")
@@ -90,11 +95,10 @@ def format_item_update(item):
         if text:
             print(text, end="", flush=True)
 
+
 def format_item_complete(item):
     """Format an item.completed event."""
     item_type = item.get("type", "unknown")
-    item_id = item.get("id", "")
-
     if item_type == "command_execution":
         exit_code = item.get("exit_code", item.get("status", ""))
         output = item.get("output", item.get("stdout", ""))
@@ -102,7 +106,7 @@ def format_item_complete(item):
             print(f" {GREEN}ok{RESET}")
             if output:
                 # Show truncated output
-                for line in str(output).split('\n')[:3]:
+                for line in str(output).split("\n")[:3]:
                     print(f"  {DIM}{truncate(line, 80)}{RESET}")
         else:
             print(f" {RED}exit {exit_code}{RESET}")
@@ -145,6 +149,7 @@ def format_item_complete(item):
         print(f"\n{RED}ERROR: {msg}{RESET}")
         log_summary(f"ERROR: {truncate(msg, 80)}")
 
+
 def format_turn_complete(data):
     """Format turn.completed with usage stats."""
     usage = data.get("usage", {})
@@ -163,6 +168,7 @@ def format_turn_complete(data):
 
         print(f"\n{DIM}tokens: {' '.join(parts)}{RESET}")
         log_summary(f"TOKENS: {' '.join(parts)}")
+
 
 # Main loop
 for line in sys.stdin:

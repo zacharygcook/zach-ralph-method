@@ -1,156 +1,27 @@
 #!/usr/bin/env bash
-# Documentation Update Hook - Hybrid approach.
 
 set -euo pipefail
 
-SPRINT_DIR="$1"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SPRINT_DIR="${1:?Usage: document.sh <sprint-dir>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RALPH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$RALPH_DIR/.." && pwd)"
+source "$RALPH_DIR/config.env"
+source "$RALPH_DIR/lib/ralph-common.sh"
+
+if [[ "${RALPH_DOCUMENTATION_ENABLED:-true}" != "true" ]]; then
+  echo "Documentation hook disabled explicitly by RALPH_DOCUMENTATION_ENABLED=false"
+  exit 20
+fi
+
+require_commands git jq python3 || exit 12
 MANIFEST="$SPRINT_DIR/manifest.json"
+[[ -f "$MANIFEST" ]] || { echo "Missing manifest: $MANIFEST"; exit 14; }
 
-source "$SCRIPT_DIR/lib/ralph-common.sh"
+PROMPT_FILE="${RALPH_HOOK_RUNTIME_DIR:-$SPRINT_DIR}/documentation.prompt.md"
+{
+  cat "$RALPH_DIR/prompts/document.md"
+  printf '\n## Sprint context\n\n- Sprint directory: `%s`\n- Project root: `%s`\n' "$SPRINT_DIR" "$PROJECT_ROOT"
+} > "$PROMPT_FILE"
 
-EVENT_LOG="${RALPH_EVENT_LOG:-$SPRINT_DIR/hooks.events.jsonl}"
-EXIT_DEP_MISSING=12
-EXIT_VALIDATION=14
-
-log_event() {
-  append_event "$EVENT_LOG" "$1" "$2" "$3"
-}
-
-run_claude_with_live_log() {
-  local prompt="$1"
-  local log_file="$2"
-  local sidecar_pid claude_pid claude_exit sidecar_exit
-
-  : > "$log_file"
-  tail -n +1 -f "$log_file" 2>/dev/null &
-  sidecar_pid=$!
-
-  claude --dangerously-skip-permissions -p "$prompt" >"$log_file" 2>&1 &
-  claude_pid=$!
-
-  log_event "process" "spawned" "hook=document claude_pid=$claude_pid sidecar_pid=$sidecar_pid"
-
-  set +e
-  wait "$claude_pid"
-  claude_exit=$?
-  kill_process_tree "$sidecar_pid"
-  wait "$sidecar_pid" 2>/dev/null
-  sidecar_exit=$?
-  set -e
-
-  log_event "process" "closed" "hook=document claude_pid=$claude_pid sidecar_pid=$sidecar_pid sidecar_exit=$sidecar_exit claude_exit=$claude_exit"
-  return "$claude_exit"
-}
-
-preflight() {
-  local missing
-  missing=$(require_commands jq claude || true)
-  if [[ -n "$missing" ]]; then
-    echo "$missing"
-    log_event "document" "failed" "dependency_missing: $missing"
-    return "$EXIT_DEP_MISSING"
-  fi
-  return 0
-}
-
-if [[ ! -f "$MANIFEST" ]]; then
-  echo "ERROR: Manifest not found: $MANIFEST"
-  log_event "document" "failed" "manifest_missing"
-  exit "$EXIT_VALIDATION"
-fi
-
-preflight || exit $?
-
-SPRINT_NAME=$(jq -r '.sprint' "$MANIFEST")
-SPRINT_NUM=$(echo "$SPRINT_NAME" | grep -oE '^[0-9]+' || echo "")
-DOC_LOG="$SPRINT_DIR/document.log"
-
-SPRINT_DOCS_DIR="$PROJECT_ROOT/docs/sprints"
-mkdir -p "$SPRINT_DOCS_DIR"
-SPRINT_DOC_FILE="$SPRINT_DOCS_DIR/$SPRINT_NAME.md"
-
-echo "Updating documentation for sprint: $SPRINT_NAME"
-echo "Sprint summary: $SPRINT_DOC_FILE"
-echo "Main docs: $PROJECT_ROOT/docs/"
-log_event "document" "running" "start sprint=$SPRINT_NAME"
-
-CHUNKS_FILE="$SPRINT_DIR/chunks.json"
-CHUNKS_CONTENT=""
-if [[ -f "$CHUNKS_FILE" ]]; then
-  CHUNKS_CONTENT=$(cat "$CHUNKS_FILE")
-fi
-
-COMMITS=$(jq -r '.commits[] | "- \(.hash[0:7]) \(.message)"' "$MANIFEST" 2>/dev/null || echo "No commits recorded")
-ARTIFACTS=$(jq -r '.chunks[].artifacts[]' "$CHUNKS_FILE" 2>/dev/null | sort -u || echo "")
-
-ARTIFACT_CONTENT=""
-for artifact in $ARTIFACTS; do
-  FULL_PATH="$PROJECT_ROOT/$artifact"
-  if [[ -f "$FULL_PATH" ]]; then
-    EXT="${artifact##*.}"
-    ARTIFACT_CONTENT+="### $artifact
-\`\`\`$EXT
-$(head -100 "$FULL_PATH")
-\`\`\`
-
-"
-  fi
-done
-
-EXISTING_DOCS=$(ls "$PROJECT_ROOT/docs/"*.md 2>/dev/null | xargs -I{} basename {} | tr '\n' ', ' || echo "none")
-PROMPT_TEMPLATE=$(cat "$SCRIPT_DIR/prompts/document.md")
-
-FULL_PROMPT=$(cat <<EOF_PROMPT
-$PROMPT_TEMPLATE
-
-## Sprint: $SPRINT_NAME (Sprint $SPRINT_NUM)
-
-## Chunks Completed:
-\`\`\`json
-$CHUNKS_CONTENT
-\`\`\`
-
-## Commits:
-$COMMITS
-
-## Key Files Created/Modified:
-$ARTIFACT_CONTENT
-
-## Existing Documentation Files:
-$EXISTING_DOCS
-
-## Output Locations:
-1. Sprint summary file: $SPRINT_DOC_FILE
-2. Main docs to update: $PROJECT_ROOT/docs/
-
-## Instructions:
-1. Create the sprint summary at $SPRINT_DOC_FILE (concise, 50-100 lines)
-2. Read and update relevant main docs in docs/
-3. Do NOT add "Generated with" or "Co-Authored-By" lines
-4. Commit with: docs: update documentation for sprint $SPRINT_NUM
-EOF_PROMPT
-)
-
-set +e
-run_claude_with_live_log "$FULL_PROMPT" "$DOC_LOG"
-DOC_EXIT=$?
-set -e
-
-if [[ "$DOC_EXIT" -ne 0 ]]; then
-  echo "WARNING: Claude documentation generation exited with non-zero status"
-  log_event "document" "failed" "claude_exit=$DOC_EXIT"
-else
-  log_event "document" "ok" "claude_exit=0"
-fi
-
-echo ""
-if [[ -f "$SPRINT_DOC_FILE" ]]; then
-  echo "Sprint summary created: $SPRINT_DOC_FILE"
-else
-  echo "WARNING: Sprint summary not created at $SPRINT_DOC_FILE"
-fi
-
-echo "Documentation update complete. See $DOC_LOG for details."
-exit "$DOC_EXIT"
+run_agent "${RALPH_DOCUMENTATION_AGENT:-${RALPH_AGENT:-}}" "$PROMPT_FILE" "$PROJECT_ROOT"

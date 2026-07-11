@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
+
 # Shared helpers for Ralph loop + hooks.
-# Source this from loop.sh, post-sprint.sh, and individual hooks.
 # shellcheck disable=SC2120
 
-# ── Timestamps ──────────────────────────────────────────────
 now_iso() {
-  date -Iseconds
+  date -u "+%Y-%m-%dT%H:%M:%SZ"
 }
 
 epoch_now() {
   date +%s
 }
 
-# ── Process Management ──────────────────────────────────────
 process_alive() {
   local pid="${1:-}"
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
@@ -62,9 +60,6 @@ kill_process_tree() {
   kill -KILL "$pid" 2>/dev/null || true
 }
 
-# ── Structured Event Logging ───────────────────────────────
-# Appends a JSON event to an events.jsonl file.
-# Usage: append_event "$EVENT_LOG" "iteration" "started" "iteration=1"
 append_event() {
   local event_log="$1"
   local event_type="$2"
@@ -83,8 +78,6 @@ append_event() {
     '{timestamp:$ts,type:$type,status:$status,message:$msg}' >> "$event_log" 2>/dev/null || true
 }
 
-# ── Lock-Protected Manifest Updates ────────────────────────
-# Prevents concurrent jq writes from corrupting manifest.json.
 with_lock() {
   local lock_path="$1"
   local timeout_sec="${2:-15}"
@@ -124,10 +117,6 @@ manifest_update_locked() {
   with_lock "$lock_path" 20 _manifest_update_inner "$@"
 }
 
-# ── Dependency Preflight ───────────────────────────────────
-# Checks that required commands exist.
-# Usage: require_commands jq codex python3 git
-# Returns non-zero and prints missing commands if any are absent.
 require_commands() {
   local missing=0
   local cmd
@@ -140,7 +129,53 @@ require_commands() {
   return "$missing"
 }
 
-# ── Chunk State Queries ────────────────────────────────────
+run_agent() {
+  local agent="${1:-}"
+  local prompt_file="${2:-}"
+  local project_root="${3:-$PWD}"
+
+  [[ "${RALPH_UNATTENDED_APPROVED:-false}" == "true" ]] || {
+    echo "Refusing unattended agent execution until RALPH_UNATTENDED_APPROVED=true"
+    return 14
+  }
+  [[ -f "$prompt_file" ]] || { echo "Prompt file not found: $prompt_file"; return 14; }
+
+  if [[ -n "${RALPH_AGENT_COMMAND:-}" ]]; then
+    export RALPH_PROMPT_FILE="$prompt_file"
+    export RALPH_PROJECT_ROOT="$project_root"
+    (cd "$project_root" && bash -lc "$RALPH_AGENT_COMMAND")
+    return $?
+  fi
+
+  case "$agent" in
+    claude)
+      require_commands claude || return 12
+      (cd "$project_root" && claude --dangerously-skip-permissions -p "$(cat "$prompt_file")" \
+        --output-format=stream-json --include-partial-messages --verbose)
+      ;;
+    codex)
+      require_commands codex || return 12
+      (cd "$project_root" && codex exec --yolo --json "$(cat "$prompt_file")")
+      ;;
+    amp)
+      require_commands amp || return 12
+      (cd "$project_root" && amp run --autonomous --prompt-file "$prompt_file")
+      ;;
+    opencode)
+      require_commands opencode || return 12
+      (cd "$project_root" && opencode --auto --prompt "$prompt_file")
+      ;;
+    droid)
+      require_commands droid || return 12
+      (cd "$project_root" && droid exec --auto high -f "$prompt_file")
+      ;;
+    *)
+      echo "Unknown or missing RALPH_AGENT: ${agent:-none}; configure RALPH_AGENT_COMMAND for another client"
+      return 12
+      ;;
+  esac
+}
+
 count_passed_chunks() {
   local chunks_file="$1"
   jq '[.chunks[] | select(.passes == true)] | length' "$chunks_file" 2>/dev/null || echo 0
@@ -151,13 +186,6 @@ all_chunks_pass() {
   jq -e 'all(.chunks[]; .passes == true)' "$chunks_file" >/dev/null 2>&1
 }
 
-# ── Scoped Completion Marker Detection ─────────────────────
-# Returns: "sprint", "chunk", "legacy_chunk", or "none"
-#
-# Markers (in priority order):
-#   RALPH_SPRINT_COMPLETE  - all chunks done, sprint finished
-#   RALPH_CHUNK_COMPLETE   - current chunk done
-#   RALPH_COMPLETE         - legacy (treated as chunk-level)
 detect_completion_scope() {
   local log_file="$1"
 
@@ -179,22 +207,6 @@ detect_completion_scope() {
   echo "none"
 }
 
-# ── Heartbeat + Idle Monitoring ────────────────────────────
-# Monitors a background process with periodic heartbeats and
-# optional idle timeout (kills process if log file stops growing).
-#
-# Args:
-#   $1  pid              - PID to monitor
-#   $2  label            - Human-readable label for events
-#   $3  log_file         - Log file to check for growth
-#   $4  heartbeat_sec    - Seconds between heartbeat events (0=disabled)
-#   $5  idle_timeout_sec - Kill after this many seconds idle (0=disabled)
-#   $6  event_log        - Path to events.jsonl
-#   $7  state_file          - (optional) JSON state file to update
-#   $8  post_result_idle_sec- Kill after terminal result + idle (0=disabled)
-#   $9  observed_pids_csv   - Comma-separated PIDs to snapshot on stall
-#
-# Returns: exit code of monitored process, or 11 on idle timeout.
 monitor_process_with_heartbeat() {
   local pid="$1"
   local label="$2"
@@ -218,14 +230,13 @@ monitor_process_with_heartbeat() {
   fi
 
   # Use jobs-based liveness for child processes spawned by this shell.
-  # This avoids zombie false-positives where `kill -0` can stay true
-  # on macOS until the process is reaped.
+  # This avoids zombie false-positives where `kill -0` can stay true until reaped.
   while jobs -pr | grep -qx "$pid"; do
     sleep 1
     now=$(epoch_now)
 
     if (( post_result_idle_sec > 0 )) && (( result_seen == 0 )); then
-      if [[ -f "$log_file" ]] && grep -q '"type":"result"' "$log_file"; then
+      if [[ -f "$log_file" ]] && grep -q "${RALPH_TERMINAL_RESULT_PATTERN:-\"type\":\"result\"}" "$log_file"; then
         result_seen=1
         size=$(wc -c < "$log_file" 2>/dev/null || echo "$last_size")
         append_event "$event_log" "result_seen" "running" "$label detected terminal result event at_bytes=$size"

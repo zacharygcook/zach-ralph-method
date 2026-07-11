@@ -5,6 +5,10 @@ blackbird/
 /*
 !docs/
 !templates/
+!scripts/
+!tests/
+!.github/
+!VERSION
 !/CLAUDE.md
 !/AGENTS.md
 !/README.md
@@ -22,3 +26,5 @@ notes/
 # OS files
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
