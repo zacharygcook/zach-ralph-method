@@ -89,28 +89,85 @@ npx skills@latest experimental_install
 The command name is currently marked experimental by the Skills CLI; the committed lockfile remains
 the reproducible source declaration.
 
-## Quick start
+## Quick start: from a spec to a running loop
 
-Every sprint lives at `.ralph/sprints/<number-name>/` and contains:
+### 1. Check the prerequisites
+
+Before the first sprint, have:
+
+- A Git repository with a known baseline and no unexplained concurrent changes.
+- Node.js/npm with `npx` for installing or updating the skill.
+- Bash, Git, `jq`, and Python 3 for the generated runtime.
+- A supported coding-agent CLI: Codex, Claude Code, Droid, Amp, OpenCode, or a configured custom command.
+- A durable `SPEC.md` (or equivalent source of truth) describing the desired system and boundaries.
+- One fast per-chunk validation command and one comprehensive final validation command. Existing test,
+  lint, typecheck, build, and E2E scripts are ideal inputs.
+
+On Windows, run the Bash runtime in a compatible environment such as WSL. If the repository does
+not have a useful spec or validation commands yet, create those before authorizing an autonomous
+loop.
+
+### 2. Ask the skill to prepare the first sprint
+
+This repository ships one operator-facing skill: `$ralph-workflows`. The initialization, spec
+breakdown, sprint creation, chunk planning, status, and review workflows are bundled references—not
+separate skills you need to install or memorize.
+
+Ask your coding agent:
 
 ```text
-README.md                short goal and boundaries
-IMPLEMENTATION_PLAN.md   ordered implementation design
-relevant-specs.md        curated source-of-truth context
-chunks.json              sequential work and acceptance criteria
-prompt.md                instructions for each fresh agent context
-SCRATCHPAD.md            append-only discoveries and handoff memory
+Use $ralph-workflows to preflight this repository for a Ralph loop. Read SPEC.md and the repository's
+agent instructions. Identify the fast chunk-validation command and comprehensive sprint-validation
+command. Initialize or upgrade .ralph, break the spec into dependency-ordered sprints, create only
+the first sprint, set CURRENT_SPRINT, validate the complete setup, and stop before unattended
+execution. Explain any blockers and summarize exactly what I should review.
 ```
 
-Set `CURRENT_SPRINT` in `.ralph/config.env`, then:
+You do **not** manually create `.ralph/` or its sprint files. The deterministic installer creates the
+runtime directories; the skill creates `.ralph/sprints/<number-name>/`, curates the relevant spec,
+builds `chunks.json`, adds persistent `SCRATCHPAD.md` memory, and selects the active sprint.
+
+### 3. Review before arming
+
+Inspect the proposed sprint, especially its goal, chunk order, artifacts, acceptance criteria, and
+validation commands. To ask the skill for a readiness check:
+
+```text
+Use $ralph-workflows to inspect the current Ralph sprint and tell me whether it is safe and complete
+enough to run. Do not start the loop or change authorization.
+```
+
+The current sprint lives at the path named by `CURRENT_SPRINT` in `.ralph/config.env`. Every sprint
+contains `README.md`, `IMPLEMENTATION_PLAN.md`, `relevant-specs.md`, `chunks.json`, `prompt.md`, and
+`SCRATCHPAD.md`.
+
+### 4. Arm and run deliberately
+
+After review, set `RALPH_UNATTENDED_APPROVED=true` in `.ralph/config.env`, then run:
 
 ```bash
-python3 .agents/skills/ralph-workflows/scripts/ralph.py validate --repo .
 ./.ralph/loop.sh
+```
+
+Inspect progress at any time with:
+
+```bash
 python3 .agents/skills/ralph-workflows/scripts/ralph.py status --repo .
 ```
 
-Use `.ralph/loop.sh --resume` after interruption. Use `--force-hooks` only when intentionally rerunning completed post-sprint hooks.
+Use `./.ralph/loop.sh --resume` after interruption. Use `--force-hooks` only when intentionally
+rerunning completed post-sprint hooks.
+
+### Which workflow should I ask for?
+
+| Goal | Ask `$ralph-workflows` to… |
+| --- | --- |
+| First use | Preflight prerequisites, initialize `.ralph`, plan sprints, and create the first sprint without arming it. |
+| Existing installation | Update/upgrade safely, validate fingerprints and configuration, and preserve sprint state. |
+| New or changed spec | Break the spec into dependency-ordered sprints and prepare only the next sprint. |
+| Sprint design | Create or validate the sprint files, chunks, acceptance criteria, artifacts, and scratchpad. |
+| Progress check | Report real status from chunks, manifest phase, hooks, markers, and logs. |
+| Completion review | Check spec alignment and confirm that implementation plus required hooks actually finished. |
 
 ## Supported agent harnesses
 

@@ -7,6 +7,24 @@ description: Initialize, plan, run, inspect, and review resumable Ralph-style au
 
 Operate an autonomous implementation loop as a resumable state machine, not a one-shot prompt. Preserve negative knowledge, make progress machine-readable, and distinguish completed implementation chunks from completed review/documentation/test hooks.
 
+## First-use operator journey
+
+When a user asks how to start, preflight the repository instead of explaining sprint internals first:
+
+1. Confirm a Git repository; Bash, Git, `jq`, and Python 3; a supported agent CLI or custom command;
+   a durable `SPEC.md` or equivalent; and credible fast chunk plus comprehensive sprint validation
+   commands. Node.js/npm and `npx` are required when the skill still needs to be installed or updated.
+2. Read repository agent instructions and the spec before choosing commands or planning work.
+3. Install or upgrade the deterministic runtime. Keep unattended authorization off.
+4. Break the spec into dependency-ordered sprints, create only the first sprint under
+   `.ralph/sprints/`, set `CURRENT_SPRINT`, and validate the complete setup.
+5. Tell the operator what to review and stop before running unless they explicitly authorize the
+   autonomous loop.
+
+Do not ask the operator to hand-build `.ralph/` or sprint files. This package exposes one skill,
+`$ralph-workflows`; initialization, spec breakdown, sprint creation, chunk design, status, and review
+are routed workflows backed by the references below, not separately required skill installations.
+
 ## Deterministic runtime
 
 Vendor this skill into a project with the upstream Skills CLI:
@@ -79,6 +97,7 @@ another language-specific hook manager.
 
 ## Route the Task
 
+- First use from a spec: [references/first-run.md](references/first-run.md)
 - New setup or reliability audit: [references/initialize.md](references/initialize.md)
 - Turn a spec into dependent sprints: [references/spec-breakdown.md](references/spec-breakdown.md)
 - Create or validate a sprint folder: [references/sprint.md](references/sprint.md)

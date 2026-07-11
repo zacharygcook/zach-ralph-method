@@ -1,6 +1,4 @@
 interface:
   display_name: "Ralph Workflows"
-  short_description: "Build resumable autonomous coding loops"
-  default_prompt: "Use $ralph-workflows to initialize, plan, inspect, or review this resumable autonomous sprint loop."
-policy:
-  allow_implicit_invocation: true
+  short_description: "Prepare and run resumable coding sprints"
+  default_prompt: "Use $ralph-workflows to preflight this repository, prepare the first safe sprint from its spec, and stop before unattended execution."
