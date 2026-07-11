@@ -52,6 +52,4 @@ into a shared parent containing two or more independent child Git repositories a
    - `bash`, `git`, `jq`, and Python 3 are present
    - multi-repo chunks name a configured repository or `all`, and each repository keeps an independent commit boundary
 
-Install or update with `scripts/ralph.py`, then run its `validate` command before live execution. In
-multi-repo mode, ensure project-supplied validation commands cover contracts that cross repository
-boundaries.
+Vendor a new package with `npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy -y`, or refresh a locked package with `npx skills@latest update ralph-workflows --project -y`. Then use the vendored `scripts/ralph.py` to initialize or upgrade the stateful project runtime and run `validate` before live execution. In multi-repo mode, ensure project-supplied validation commands cover contracts that cross repository boundaries.

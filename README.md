@@ -25,36 +25,69 @@ SPEC → PLAN → CHUNKS → IMPLEMENT → VERIFY → COMMIT
 
 ## Install in 30 seconds
 
-Vendor the complete skill into your project:
+From the Git repository you want Ralph to manage, vendor the complete private skill with the Skills
+CLI. Your local GitHub credentials must have access to `zach-ralph-method`:
 
 ```bash
 npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy -y
 ```
 
-Then initialize from the project-local copy:
+Confirm the project-local installation:
 
 ```bash
-python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo . --agent codex --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+npx skills@latest list
 ```
 
 The Skills CLI detects the active coding agent. Pass `--agent <name>` only when targeting one
 explicitly; `--agent '*'` intentionally installs copies for every supported client.
 
-Or clone this repository and run the canonical script directly:
+### What `npx skills` manages
 
-Clone this repository, then install into a Git repository:
+Ralph has two deliberately separate layers:
+
+| Layer | Use | Why |
+| --- | --- | --- |
+| Skill package | `npx skills add`, `update`, `list`, `remove`, and `experimental_install` | Vendor and refresh instructions, scripts, and templates without a manual clone. |
+| Project runtime | Bundled `ralph.py` and `.ralph/loop.sh` | Safely initialize, migrate, validate, inspect, and run repository-owned state. |
+
+`npx skills` is the primary package manager. It intentionally does not execute arbitrary
+post-install hooks, so the bundled Python command remains necessary when creating or migrating the
+stateful `.ralph/` runtime.
+
+### Initialize a new project
+
+After the `npx skills add` command, initialize from the vendored copy:
 
 ```bash
-python3 scripts/ralph.py init --repo /path/to/project --agent codex --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo . --agent codex --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
 ```
 
-For a parent directory containing multiple child Git repositories:
+The installer creates `.ralph/` but leaves autonomous execution disarmed. Review
+`.ralph/config.env`, create a sprint, then explicitly set `RALPH_UNATTENDED_APPROVED=true` only when
+you are ready.
+
+### Update an existing project
+
+Refresh the vendored skill first, then safely migrate its generated runtime:
 
 ```bash
-python3 scripts/ralph.py init --repo /path/to/parent --mode multi-repo --repos api web --primary-repo api --agent codex --chunk-validation-command "your fast cross-repo check" --sprint-validation-command "your full cross-repo check"
+npx skills@latest update ralph-workflows --project -y
+python3 .agents/skills/ralph-workflows/scripts/ralph.py upgrade --repo .
 ```
 
-The installer creates `.ralph/` but leaves autonomous execution disarmed. Review `.ralph/config.env`, create a sprint, then explicitly set `RALPH_UNATTENDED_APPROVED=true` when you are ready—or pass `--approve-unattended` only when that authorization is deliberate.
+The upgrade preserves configuration, authorization, sprints, logs, and scratchpads. A legacy runtime
+without validation gates stops and requests the missing commands instead of guessing them.
+
+### Restore skills from a committed lockfile
+
+When a repository already contains `skills-lock.json`, restore its pinned project skills with:
+
+```bash
+npx skills@latest experimental_install
+```
+
+The command name is currently marked experimental by the Skills CLI; the committed lockfile remains
+the reproducible source declaration.
 
 ## Quick start
 
@@ -72,9 +105,9 @@ SCRATCHPAD.md            append-only discoveries and handoff memory
 Set `CURRENT_SPRINT` in `.ralph/config.env`, then:
 
 ```bash
-python3 scripts/ralph.py validate --repo /path/to/project
-/path/to/project/.ralph/loop.sh
-python3 scripts/ralph.py status --repo /path/to/project
+python3 .agents/skills/ralph-workflows/scripts/ralph.py validate --repo .
+./.ralph/loop.sh
+python3 .agents/skills/ralph-workflows/scripts/ralph.py status --repo .
 ```
 
 Use `.ralph/loop.sh --resume` after interruption. Use `--force-hooks` only when intentionally rerunning completed post-sprint hooks.
@@ -94,15 +127,9 @@ The default installation will not run autonomously. It also will not auto-commit
 `RALPH_AUTO_COMMIT=I_ACCEPT_GIT_ADD_ALL` to deliberately enable broad backup commits. Normal agent
 prompts instruct scoped staging instead.
 
-`--update-runtime` refreshes only managed runtime files. It preserves operator configuration, sprints, logs, and scratchpad state, and refuses mode changes or managed symlinks that could escape `.ralph/`.
-
-For an installed runtime, prefer the migration-aware upgrade command. It preserves operator state,
-promotes a legacy `RALPH_TEST_COMMAND` into the sprint gate, and refuses to leave enabled validation
-without a command:
-
-```bash
-python3 .agents/skills/ralph-workflows/scripts/ralph.py upgrade --repo . --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
-```
+The migration-aware upgrade refreshes only managed runtime files. It preserves operator
+configuration, sprints, logs, and scratchpad state, promotes legacy validation configuration, and
+refuses mode changes or managed symlinks that could escape `.ralph/`.
 
 ## Evidence-gated completion
 
@@ -122,6 +149,10 @@ python3 -m unittest discover -s tests -v
 ```
 
 The clean-room suite installs and executes disposable monorepo and multi-repo fixtures. GitHub Actions runs it on macOS and Linux with multiple Python versions.
+
+To develop Ralph itself instead of consuming it as a skill, clone this repository and use the
+canonical `scripts/ralph.py`. Normal adopting projects should prefer `npx skills` and the vendored
+copy documented above.
 
 ## Documentation
 

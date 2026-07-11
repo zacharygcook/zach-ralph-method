@@ -20,6 +20,19 @@ instructions, installer, and runtime templates. Use `--agent <name>` only to tar
 `--agent '*'` deliberately creates adapter copies for every supported client. Run the bundled
 installer from the detected skill directory.
 
+For a repository that already has `skills-lock.json`, refresh the package before upgrading the
+project runtime:
+
+```bash
+npx skills@latest update ralph-workflows --project -y
+python3 <skill-dir>/scripts/ralph.py upgrade --repo <repository>
+```
+
+Use `npx skills@latest experimental_install` to restore pinned project skills from a committed
+lockfile on another machine. `npx skills` owns skill packaging; the bundled runtime command owns
+stateful `.ralph/` initialization, migration, validation, and status because the package manager does
+not run arbitrary lifecycle hooks.
+
 Install the bundled hardened Bash runtime only when the user asks to initialize or repair Ralph:
 
 ```bash
@@ -39,8 +52,9 @@ hook explicitly when it is genuinely outside the repository's workflow; skipped 
 in the manifest instead of being reported as completed work.
 
 Upgrade an existing runtime without replacing operator configuration, sprints, logs, or scratchpad
-state. Legacy `RALPH_TEST_COMMAND` values migrate to the sprint validation gate; a missing chunk gate
-must be supplied or explicitly disabled:
+state. Usually the stored validation configuration makes `upgrade --repo <repository>` sufficient.
+Legacy `RALPH_TEST_COMMAND` values migrate to the sprint gate; if validation configuration is missing,
+supply the commands or explicitly disable the relevant gate:
 
 ```bash
 python3 <skill-dir>/scripts/ralph.py upgrade --repo <repository> --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'

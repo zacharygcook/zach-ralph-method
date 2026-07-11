@@ -16,8 +16,16 @@ Repository names are configuration, not conventions. The parent directory does n
 
 ## Install
 
+Vendor the skill from the shared parent directory first:
+
 ```bash
-python3 scripts/ralph.py init --repo /path/to/product --mode multi-repo --repos service dashboard mobile --primary-repo service --agent codex --chunk-validation-command "your fast validation command" --sprint-validation-command "your full validation command"
+npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy -y
+```
+
+Then initialize the parent runtime from the vendored package:
+
+```bash
+python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo /path/to/product --mode multi-repo --repos service dashboard mobile --primary-repo service --agent codex --chunk-validation-command "your fast validation command" --sprint-validation-command "your full validation command"
 ```
 
 The installer verifies every named child contains `.git`, records the topology in `.runtime-manifest.json`, and writes `RALPH_REPOS` plus `RALPH_PRIMARY_REPO` to `config.env`.
@@ -68,9 +76,9 @@ require commit evidence from every configured child repository.
 ## Validate and operate
 
 ```bash
-python3 scripts/ralph.py validate --repo /path/to/product
+python3 .agents/skills/ralph-workflows/scripts/ralph.py validate --repo /path/to/product
 /path/to/product/.ralph/loop.sh
-python3 scripts/ralph.py status --repo /path/to/product
+python3 .agents/skills/ralph-workflows/scripts/ralph.py status --repo /path/to/product
 ```
 
 Status shows each child repository's commit range, hook state, latest events, and heartbeat age using portable Python timestamp parsing on macOS and Linux.
