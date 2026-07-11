@@ -108,6 +108,18 @@ def create_sprint(root: Path, name: str = "1-demo", repo: str | None = None) -> 
 
 
 class RalphRuntimeTest(unittest.TestCase):
+    def test_self_contained_skill_package_matches_canonical_runtime(self) -> None:
+        result = run(
+            sys.executable,
+            str(MODULE_PATH.parent / "sync_skill_package.py"),
+            "check",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        packaged = MODULE_PATH.parents[1] / "skill" / "scripts" / "ralph.py"
+        help_result = run(sys.executable, str(packaged), "--help")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("upgrade", help_result.stdout)
+
     def test_recovered_shell_runtime_has_valid_syntax(self) -> None:
         scripts = sorted(
             {
@@ -176,6 +188,111 @@ class RalphRuntimeTest(unittest.TestCase):
             self.assertEqual(
                 ralph.sha256(loop), ralph.sha256(ralph.runtime_sources("monorepo")["loop.sh"])
             )
+
+    def test_upgrade_migrates_legacy_validation_and_preserves_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            self.assertEqual(
+                run_cli(
+                    "init", "--repo", str(repo),
+                    "--disable-chunk-validation", "--disable-sprint-validation",
+                ).returncode,
+                0,
+            )
+            sprint = create_sprint(repo)
+            config = repo / ".ralph" / "config.env"
+            legacy = (
+                "# operator-owned legacy configuration\n"
+                "CURRENT_SPRINT=1-demo\n"
+                "RALPH_MODE=monorepo\n"
+                "RALPH_AGENT=codex\n"
+                "RALPH_UNATTENDED_APPROVED=false\n"
+                "RALPH_AUTO_COMMIT=false\n"
+                "RALPH_TEST_COMMAND='./scripts/check.sh'\n"
+            )
+            config.write_text(legacy, encoding="utf-8")
+            metadata_path = repo / ".ralph" / ".runtime-manifest.json"
+            metadata = json.loads(metadata_path.read_text())
+            metadata["runtime_version"] = "0.4.0"
+            metadata_path.write_text(json.dumps(metadata) + "\n")
+
+            result = run_cli(
+                "upgrade", "--repo", str(repo),
+                "--chunk-validation-command", "./scripts/test.sh",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            text = config.read_text(encoding="utf-8")
+            self.assertIn("# operator-owned legacy configuration", text)
+            self.assertIn("CURRENT_SPRINT=1-demo", text)
+            self.assertIn("RALPH_UNATTENDED_APPROVED=false", text)
+            values = ralph.parse_config(config)
+            self.assertEqual(
+                values["RALPH_CHUNK_VALIDATION_COMMAND"], "./scripts/test.sh"
+            )
+            self.assertEqual(
+                values["RALPH_SPRINT_VALIDATION_COMMAND"], "./scripts/check.sh"
+            )
+            self.assertEqual(values["RALPH_CHUNK_VALIDATION_ENABLED"], "true")
+            self.assertEqual(values["RALPH_SPRINT_VALIDATION_ENABLED"], "true")
+            self.assertTrue((sprint / "SCRATCHPAD.md").is_file())
+            upgraded = json.loads(metadata_path.read_text())
+            self.assertEqual(upgraded["runtime_version"], ralph.runtime_version())
+            self.assertEqual(upgraded["previous_runtime_version"], "0.4.0")
+
+    def test_upgrade_requires_missing_chunk_gate_before_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            self.assertEqual(
+                run_cli(
+                    "init", "--repo", str(repo),
+                    "--disable-chunk-validation", "--sprint-validation-command", "true",
+                ).returncode,
+                0,
+            )
+            config = repo / ".ralph" / "config.env"
+            replace_config(config, "RALPH_CHUNK_VALIDATION_ENABLED", "true")
+            replace_config(config, "RALPH_CHUNK_VALIDATION_COMMAND", "")
+            loop = repo / ".ralph" / "loop.sh"
+            loop.write_text("local sentinel\n", encoding="utf-8")
+            before_config = config.read_bytes()
+            before_metadata = (repo / ".ralph" / ".runtime-manifest.json").read_bytes()
+            result = run_cli("upgrade", "--repo", str(repo))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("--chunk-validation-command", result.stderr)
+            self.assertEqual(loop.read_text(encoding="utf-8"), "local sentinel\n")
+            self.assertEqual(config.read_bytes(), before_config)
+            self.assertEqual(
+                (repo / ".ralph" / ".runtime-manifest.json").read_bytes(),
+                before_metadata,
+            )
+
+    def test_validate_rejects_stale_runtime_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            self.assertEqual(
+                run_cli(
+                    "init", "--repo", str(repo),
+                    "--disable-chunk-validation", "--disable-sprint-validation",
+                ).returncode,
+                0,
+            )
+            metadata_path = repo / ".ralph" / ".runtime-manifest.json"
+            metadata = json.loads(metadata_path.read_text())
+            metadata["runtime_version"] = "0.4.0"
+            metadata_path.write_text(json.dumps(metadata) + "\n")
+            result = run_cli("validate", "--repo", str(repo), "--json")
+            self.assertNotEqual(result.returncode, 0)
+            report = json.loads(result.stdout)
+            version = next(
+                item
+                for item in report["findings"]
+                if item["check"] == "runtime:version"
+            )
+            self.assertEqual(version["status"], "fail")
+            self.assertIn("run upgrade", version["detail"])
 
     def test_multi_repo_init_and_validation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

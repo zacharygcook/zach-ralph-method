@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SPRINT_DIR="${1:?Usage: document.sh <sprint-dir>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RALPH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$RALPH_DIR/.." && pwd)"
+source "$RALPH_DIR/config.env"
+source "$RALPH_DIR/lib/ralph-common.sh"
+
+if [[ "${RALPH_DOCUMENTATION_ENABLED:-true}" != "true" ]]; then
+  echo "Documentation hook disabled explicitly by RALPH_DOCUMENTATION_ENABLED=false"
+  exit 20
+fi
+
+require_commands git jq python3 || exit 12
+MANIFEST="$SPRINT_DIR/manifest.json"
+[[ -f "$MANIFEST" ]] || { echo "Missing manifest: $MANIFEST"; exit 14; }
+
+PROMPT_FILE="${RALPH_HOOK_RUNTIME_DIR:-$SPRINT_DIR}/documentation.prompt.md"
+{
+  cat "$RALPH_DIR/prompts/document.md"
+  printf '\n## Sprint context\n\n- Sprint directory: `%s`\n- Project root: `%s`\n' "$SPRINT_DIR" "$PROJECT_ROOT"
+} > "$PROMPT_FILE"
+
+run_agent "${RALPH_DOCUMENTATION_AGENT:-${RALPH_AGENT:-}}" "$PROMPT_FILE" "$PROJECT_ROOT"

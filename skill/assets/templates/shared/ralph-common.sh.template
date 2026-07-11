@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+
+# Shared helpers for Ralph loop + hooks.
+# shellcheck disable=SC2120
+
+now_iso() {
+  date -u "+%Y-%m-%dT%H:%M:%SZ"
+}
+
+epoch_now() {
+  date +%s
+}
+
+process_alive() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+process_pgid() {
+  local pid="${1:-}"
+  [[ -z "$pid" ]] && return 1
+  ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]'
+}
+
+append_process_snapshot_event() {
+  local event_log="$1"
+  local event_type="$2"
+  local status="$3"
+  local label="$4"
+  local pids_csv="${5:-}"
+
+  [[ -z "$event_log" ]] && return 0
+  [[ -z "$pids_csv" ]] && return 0
+
+  local snapshot
+  snapshot=$(
+    for pid in ${pids_csv//,/ }; do
+      [[ -z "$pid" ]] && continue
+      ps -o pid,ppid,pgid,stat,etime,command= -p "$pid" 2>/dev/null || true
+      pgrep -P "$pid" 2>/dev/null | while read -r child_pid; do
+        ps -o pid,ppid,pgid,stat,etime,command= -p "$child_pid" 2>/dev/null || true
+      done
+    done | awk 'NF > 0'
+  )
+
+  if [[ -n "$snapshot" ]]; then
+    append_event "$event_log" "$event_type" "$status" "$label :: $(echo "$snapshot" | tr '\n' '; ')"
+  fi
+}
+
+kill_process_tree() {
+  local pid="${1:-}"
+  [[ -z "$pid" ]] && return 0
+
+  # Best effort: terminate children first, then the parent.
+  pkill -TERM -P "$pid" 2>/dev/null || true
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 1
+  pkill -KILL -P "$pid" 2>/dev/null || true
+  kill -KILL "$pid" 2>/dev/null || true
+}
+
+append_event() {
+  local event_log="$1"
+  local event_type="$2"
+  local status="$3"
+  local message="$4"
+
+  [[ -z "$event_log" ]] && return 0
+
+  local ts
+  ts=$(now_iso)
+  jq -nc \
+    --arg ts "$ts" \
+    --arg type "$event_type" \
+    --arg status "$status" \
+    --arg msg "$message" \
+    '{timestamp:$ts,type:$type,status:$status,message:$msg}' >> "$event_log" 2>/dev/null || true
+}
+
+with_lock() {
+  local lock_path="$1"
+  local timeout_sec="${2:-15}"
+  shift 2
+
+  local start now
+  start=$(epoch_now)
+
+  while ! mkdir "$lock_path" 2>/dev/null; do
+    now=$(epoch_now)
+    if (( now - start >= timeout_sec )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+
+  "$@"
+  local exit_code=$?
+  rmdir "$lock_path" 2>/dev/null || true
+  return "$exit_code"
+}
+
+manifest_update_locked() {
+  local manifest="$1"
+  shift
+
+  local lock_path="${manifest}.lockdir"
+  local tmp="${manifest}.tmp"
+
+  _manifest_update_inner() {
+    if ! jq "$@" "$manifest" > "$tmp"; then
+      return 1
+    fi
+    mv "$tmp" "$manifest"
+  }
+
+  with_lock "$lock_path" 20 _manifest_update_inner "$@"
+}
+
+require_commands() {
+  local missing=0
+  local cmd
+  for cmd in "$@"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      echo "MISSING_COMMAND:$cmd"
+      missing=1
+    fi
+  done
+  return "$missing"
+}
+
+run_agent() {
+  local agent="${1:-}"
+  local prompt_file="${2:-}"
+  local project_root="${3:-$PWD}"
+
+  [[ "${RALPH_UNATTENDED_APPROVED:-false}" == "true" ]] || {
+    echo "Refusing unattended agent execution until RALPH_UNATTENDED_APPROVED=true"
+    return 14
+  }
+  [[ -f "$prompt_file" ]] || { echo "Prompt file not found: $prompt_file"; return 14; }
+
+  if [[ -n "${RALPH_AGENT_COMMAND:-}" ]]; then
+    export RALPH_PROMPT_FILE="$prompt_file"
+    export RALPH_PROJECT_ROOT="$project_root"
+    (cd "$project_root" && bash -lc "$RALPH_AGENT_COMMAND")
+    return $?
+  fi
+
+  case "$agent" in
+    claude)
+      require_commands claude || return 12
+      (cd "$project_root" && claude --dangerously-skip-permissions -p "$(cat "$prompt_file")" \
+        --output-format=stream-json --include-partial-messages --verbose)
+      ;;
+    codex)
+      require_commands codex || return 12
+      (cd "$project_root" && codex exec --yolo --json "$(cat "$prompt_file")")
+      ;;
+    amp)
+      require_commands amp || return 12
+      (cd "$project_root" && amp run --autonomous --prompt-file "$prompt_file")
+      ;;
+    opencode)
+      require_commands opencode || return 12
+      (cd "$project_root" && opencode --auto --prompt "$prompt_file")
+      ;;
+    droid)
+      require_commands droid || return 12
+      (cd "$project_root" && droid exec --auto high -f "$prompt_file")
+      ;;
+    *)
+      echo "Unknown or missing RALPH_AGENT: ${agent:-none}; configure RALPH_AGENT_COMMAND for another client"
+      return 12
+      ;;
+  esac
+}
+
+count_passed_chunks() {
+  local chunks_file="$1"
+  jq '[.chunks[] | select(.passes == true)] | length' "$chunks_file" 2>/dev/null || echo 0
+}
+
+all_chunks_pass() {
+  local chunks_file="$1"
+  jq -e 'all(.chunks[]; .passes == true)' "$chunks_file" >/dev/null 2>&1
+}
+
+detect_completion_scope() {
+  local log_file="$1"
+
+  if grep -q "RALPH_SPRINT_COMPLETE" "$log_file"; then
+    echo "sprint"
+    return 0
+  fi
+
+  if grep -q "RALPH_CHUNK_COMPLETE" "$log_file"; then
+    echo "chunk"
+    return 0
+  fi
+
+  if grep -q "RALPH_COMPLETE" "$log_file"; then
+    echo "legacy_chunk"
+    return 0
+  fi
+
+  echo "none"
+}
+
+monitor_process_with_heartbeat() {
+  local pid="$1"
+  local label="$2"
+  local log_file="$3"
+  local heartbeat_sec="$4"
+  local idle_timeout_sec="$5"
+  local event_log="$6"
+  local state_file="${7:-}"
+  local post_result_idle_sec="${8:-0}"
+
+  local start last_growth last_heartbeat last_size now size result_seen
+  local observed_pids="${9:-$pid}"
+  start=$(epoch_now)
+  last_growth="$start"
+  last_heartbeat="$start"
+  last_size=0
+  result_seen=0
+
+  if [[ -f "$log_file" ]]; then
+    last_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
+  fi
+
+  # Use jobs-based liveness for child processes spawned by this shell.
+  # This avoids zombie false-positives where `kill -0` can stay true until reaped.
+  while jobs -pr | grep -qx "$pid"; do
+    sleep 1
+    now=$(epoch_now)
+
+    if (( post_result_idle_sec > 0 )) && (( result_seen == 0 )); then
+      if [[ -f "$log_file" ]] && grep -q "${RALPH_TERMINAL_RESULT_PATTERN:-\"type\":\"result\"}" "$log_file"; then
+        result_seen=1
+        size=$(wc -c < "$log_file" 2>/dev/null || echo "$last_size")
+        append_event "$event_log" "result_seen" "running" "$label detected terminal result event at_bytes=$size"
+        append_process_snapshot_event "$event_log" "process_snapshot" "running" "$label result_seen" "$observed_pids"
+      fi
+    fi
+
+    if [[ -f "$log_file" ]]; then
+      size=$(wc -c < "$log_file" 2>/dev/null || echo "$last_size")
+      if [[ "$size" != "$last_size" ]]; then
+        last_growth="$now"
+        last_size="$size"
+      fi
+    fi
+
+    if (( heartbeat_sec > 0 )) && (( now - last_heartbeat >= heartbeat_sec )); then
+      append_event "$event_log" "heartbeat" "running" "$label alive elapsed=$((now-start))s idle=$((now-last_growth))s"
+      last_heartbeat="$now"
+      if [[ -n "$state_file" ]]; then
+        jq -nc --arg ts "$(now_iso)" --argjson pid "$pid" --arg status "running" '{pid:$pid,status:$status,last_heartbeat:$ts}' > "$state_file" 2>/dev/null || true
+      fi
+    fi
+
+    if (( idle_timeout_sec > 0 )) && (( now - last_growth > idle_timeout_sec )); then
+      append_process_snapshot_event "$event_log" "process_snapshot" "failed" "$label idle_timeout_before_kill" "$observed_pids"
+      append_event "$event_log" "idle_timeout" "failed" "$label exceeded idle timeout (${idle_timeout_sec}s)"
+      kill_process_tree "$pid"
+      wait "$pid" 2>/dev/null || true
+      return 11
+    fi
+
+    if (( post_result_idle_sec > 0 )) && (( result_seen == 1 )) && (( now - last_growth > post_result_idle_sec )); then
+      append_process_snapshot_event "$event_log" "process_snapshot" "failed" "$label post_result_stall_before_kill" "$observed_pids"
+      append_event "$event_log" "post_result_stall" "failed" "$label stalled after result (${post_result_idle_sec}s idle)"
+      kill_process_tree "$pid"
+      wait "$pid" 2>/dev/null || true
+      return 15
+    fi
+  done
+
+  set +e
+  wait "$pid"
+  local wait_exit=$?
+  set -e
+  return "$wait_exit"
+}

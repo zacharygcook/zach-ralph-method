@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SPRINT_DIR="${1:?Usage: review.sh <sprint-dir>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RALPH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$RALPH_DIR/.." && pwd)"
+source "$RALPH_DIR/config.env"
+source "$RALPH_DIR/lib/ralph-common.sh"
+
+if [[ "${RALPH_REVIEW_ENABLED:-true}" != "true" ]]; then
+  echo "Review hook disabled explicitly by RALPH_REVIEW_ENABLED=false"
+  exit 20
+fi
+
+require_commands git jq python3 || exit 12
+MANIFEST="$SPRINT_DIR/manifest.json"
+[[ -f "$MANIFEST" ]] || { echo "Missing manifest: $MANIFEST"; exit 14; }
+
+START_COMMIT=$(jq -r '.start_commit // empty' "$MANIFEST")
+END_COMMIT=$(jq -r '.end_commit // empty' "$MANIFEST")
+[[ -n "$START_COMMIT" && -n "$END_COMMIT" ]] || { echo "Manifest requires start_commit and end_commit"; exit 14; }
+
+PROMPT_FILE="${RALPH_HOOK_RUNTIME_DIR:-$SPRINT_DIR}/review.prompt.md"
+{
+  cat "$RALPH_DIR/prompts/review.md"
+  printf '\n## Sprint context\n\n- Sprint directory: `%s`\n- Review range: `%s..%s`\n' "$SPRINT_DIR" "$START_COMMIT" "$END_COMMIT"
+} > "$PROMPT_FILE"
+
+run_agent "${RALPH_REVIEW_AGENT:-${RALPH_AGENT:-}}" "$PROMPT_FILE" "$PROJECT_ROOT"

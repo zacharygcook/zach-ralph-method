@@ -1,0 +1,37 @@
+# Goal: [Short Title]
+
+## Type
+<!-- One of: feature | bugfix | refactor | investigation | maintenance -->
+bugfix
+
+## Problem
+<!-- What's broken, missing, or needs improvement? -->
+[Describe the current situation and why it's a problem]
+
+## Success Criteria
+<!-- How do we know when this is done? Be specific. -->
+- [ ] [Criterion 1 - specific and verifiable]
+- [ ] [Criterion 2]
+- [ ] [Criterion 3]
+
+## Scope
+<!-- What repos/areas are affected? -->
+- **Repos**: [api | frontend | both]
+- **Files likely affected**:
+  - `path/to/file1.ts`
+  - `path/to/file2.ts`
+
+## Context
+<!-- Any relevant background, links to issues, related code, etc. -->
+- Related issue: [link]
+- Previous attempts: [notes]
+
+## Constraints
+<!-- Any limitations or things to avoid -->
+- Do not change X
+- Must maintain backward compatibility with Y
+- Performance must not degrade
+
+## Notes
+<!-- Additional context for the agent -->
+[Any other helpful information]

@@ -1,0 +1,42 @@
+# Sprint: [SPRINT_NAME]
+
+## Multi-repository context
+
+The working directory is a parent orchestrator containing `.ralph/` and two or more child Git repositories configured by `RALPH_REPOS`. The parent may or may not itself be a Git repository. Treat each child repository as an independent commit boundary.
+
+## Instructions
+
+1. Read `.ralph/config.env` to learn the configured repository names.
+2. Read `.ralph/sprints/[SPRINT_FOLDER]/SCRATCHPAD.md` for durable context from earlier iterations.
+3. Read `IMPLEMENTATION_PLAN.md`, `README.md`, `relevant-specs.md`, and `chunks.json` in the sprint directory.
+4. Find the first chunk where `passes: false`; its `repo` field names one configured repository or uses `all`/`both`.
+5. Complete and verify that chunk's acceptance criteria only in the named repositories.
+6. Append decisions, discoveries, per-repository state, and remaining risks to `SCRATCHPAD.md`.
+7. Commit separately inside every changed child repository. Inspect status and stage only paths belonging to the chunk.
+8. Run the configured fast validation, set only this chunk's `passes` field to `true`, commit each chunk-owned repository, then emit `<promise>RALPH_CHUNK_COMPLETE</promise>`.
+9. Ralph independently reruns `RALPH_CHUNK_VALIDATION_COMMAND`; completion is only accepted after that gate passes.
+
+## Repository rules
+
+- Run Git commands with `git -C <repository> ...` or from inside that child repository.
+- Never assume repository names, languages, package managers, test commands, or branch names.
+- Follow each repository's own agent instructions and validation commands.
+- Do not use broad staging such as `git add -A`; concurrent or unrelated work may exist.
+- A cross-repository chunk is complete only when its acceptance criteria pass across every affected repository.
+- Never mark multiple chunks passed in one iteration.
+
+## Reference patterns
+
+- [List repository-specific instruction and pattern files]
+
+## Commands
+
+```bash
+[List project-specific validation commands]
+```
+
+## Completion protocol
+
+- `RALPH_CHUNK_COMPLETE` means the current chunk is verified and committed.
+- `RALPH_SPRINT_COMPLETE` means every chunk passes and the sprint is finished.
+- If human input or additional authority is required, emit `<blocked>Describe what you need</blocked>`.

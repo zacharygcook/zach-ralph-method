@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SPRINT_DIR="${1:?Usage: review.sh <sprint-dir>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RALPH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$RALPH_DIR/.." && pwd)"
+source "$RALPH_DIR/config.env"
+source "$RALPH_DIR/lib/ralph-common.sh"
+
+if [[ "${RALPH_REVIEW_ENABLED:-true}" != "true" ]]; then
+  echo "Review hook disabled explicitly by RALPH_REVIEW_ENABLED=false"
+  exit 20
+fi
+
+require_commands git jq python3 || exit 12
+MANIFEST="$SPRINT_DIR/manifest.json"
+[[ -f "$MANIFEST" ]] || { echo "Missing manifest: $MANIFEST"; exit 14; }
+
+REPOS="${RALPH_REPOS:-${REPOS:-}}"
+[[ -n "$REPOS" ]] || { echo "RALPH_REPOS is required"; exit 14; }
+RANGES=""
+for repo in $REPOS; do
+  START_COMMIT=$(jq -r --arg repo "$repo" '.repos[$repo].start_commit // empty' "$MANIFEST")
+  END_COMMIT=$(jq -r --arg repo "$repo" '.repos[$repo].end_commit // empty' "$MANIFEST")
+  [[ -n "$START_COMMIT" && -n "$END_COMMIT" ]] || { echo "Manifest requires commits for $repo"; exit 14; }
+  RANGES+="- $repo: $START_COMMIT..$END_COMMIT"$'\n'
+done
+
+PROMPT_FILE="${RALPH_HOOK_RUNTIME_DIR:-$SPRINT_DIR}/review.prompt.md"
+{
+  cat "$RALPH_DIR/prompts/review.md"
+  printf '\n## Multi-repository sprint context\n\n- Sprint directory: `%s`\n- Project root: `%s`\n\n%s' "$SPRINT_DIR" "$PROJECT_ROOT" "$RANGES"
+} > "$PROMPT_FILE"
+
+run_agent "${RALPH_REVIEW_AGENT:-${RALPH_AGENT:-}}" "$PROMPT_FILE" "$PROJECT_ROOT"

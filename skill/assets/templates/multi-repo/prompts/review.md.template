@@ -1,0 +1,11 @@
+# Post-sprint review
+
+Review the completed sprint against its implementation plan, chunks, acceptance criteria, repository
+instructions, and the stated commit range. Inspect the actual diff and adjacent contracts. Fix only
+clear correctness, security, reliability, or maintainability defects that are within sprint scope.
+Do not change product policy, architecture, or behavior when intent is ambiguous; record those as
+open questions instead.
+
+Write `REVIEW.md` in the sprint directory with findings, fixes applied, checks run, and residual
+risk. Keep unrelated dirty work untouched. Do not use broad destructive git commands or silently
+weaken tests. Append durable discoveries and dead ends to `SCRATCHPAD.md` before exiting.

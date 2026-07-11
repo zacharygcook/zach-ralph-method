@@ -25,6 +25,20 @@ SPEC → PLAN → CHUNKS → IMPLEMENT → VERIFY → COMMIT
 
 ## Install in 30 seconds
 
+Vendor the complete skill into your project:
+
+```bash
+npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy --agent '*' -y
+```
+
+Then initialize from the project-local copy:
+
+```bash
+python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo . --agent codex --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+```
+
+Or clone this repository and run the canonical script directly:
+
 Clone this repository, then install into a Git repository:
 
 ```bash
@@ -78,6 +92,14 @@ The default installation will not run autonomously. It also will not auto-commit
 prompts instruct scoped staging instead.
 
 `--update-runtime` refreshes only managed runtime files. It preserves operator configuration, sprints, logs, and scratchpad state, and refuses mode changes or managed symlinks that could escape `.ralph/`.
+
+For an installed runtime, prefer the migration-aware upgrade command. It preserves operator state,
+promotes a legacy `RALPH_TEST_COMMAND` into the sprint gate, and refuses to leave enabled validation
+without a command:
+
+```bash
+python3 .agents/skills/ralph-workflows/scripts/ralph.py upgrade --repo . --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+```
 
 ## Evidence-gated completion
 

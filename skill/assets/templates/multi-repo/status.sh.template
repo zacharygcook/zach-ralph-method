@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# Ralph status summary for current sprint (Multi-Repo).
+# Usage: .ralph/status.sh [sprint-name]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/config.env"
+source "$SCRIPT_DIR/lib/ralph-common.sh"
+
+missing=$(require_commands jq python3 || true)
+if [[ -n "$missing" ]]; then
+  echo "$missing"
+  exit 12
+fi
+
+REPOS="${RALPH_REPOS:-}"
+[[ -n "$REPOS" ]] || { echo "RALPH_REPOS is required"; exit 14; }
+
+SPRINT="${1:-${CURRENT_SPRINT:-}}"
+if [[ -z "$SPRINT" ]]; then
+  echo "Usage: ./status.sh [sprint-name]"
+  exit 1
+fi
+
+SPRINT_DIR="$SCRIPT_DIR/sprints/$SPRINT"
+MANIFEST="$SPRINT_DIR/manifest.json"
+
+if [[ ! -d "$SPRINT_DIR" ]]; then
+  echo "Sprint not found: $SPRINT"
+  exit 1
+fi
+
+echo "Sprint: $SPRINT"
+echo "Directory: $SPRINT_DIR"
+echo "Repos: $REPOS"
+
+# Manifest info
+if [[ -f "$MANIFEST" ]]; then
+  echo "Manifest phase: $(jq -r '.phase // "unknown"' "$MANIFEST")"
+  echo "Iterations: $(jq -r '.iterations // 0' "$MANIFEST")"
+
+  echo "Repos:"
+  for repo in $REPOS; do
+    start=$(jq -r ".repos.$repo.start_commit // \"unknown\"" "$MANIFEST")
+    end=$(jq -r ".repos.$repo.end_commit // \"pending\"" "$MANIFEST")
+    echo "  - $repo: $start..$end"
+  done
+
+  echo "Hooks:"
+  jq -r '.hooks | to_entries[] | "  - \(.key): \(.value.status // "pending") reason=\(.value.reason // "none")"' "$MANIFEST"
+
+  if jq -e '.hooks.validation.phases' "$MANIFEST" >/dev/null 2>&1; then
+    echo "Final validation phases:"
+    jq -r '.hooks.validation.phases | to_entries[] | "  - \(.key): \(.value.status // "pending") reason=\(.value.reason // "none")"' "$MANIFEST"
+  fi
+
+  if jq -e '.validation.chunk_attempts | length > 0' "$MANIFEST" >/dev/null 2>&1; then
+    echo "Recent chunk validations:"
+    jq -r '.validation.chunk_attempts[-5:][] | "  - chunk \(.chunk_id) iteration \(.iteration): \(.status) exit=\(.exit_code) log=\(.log)"' "$MANIFEST"
+  fi
+else
+  echo "Manifest: (missing)"
+fi
+
+# Latest run info
+LATEST_RUN=$(ls -1dt "$SCRIPT_DIR/logs/$SPRINT"/run-* 2>/dev/null | head -1 || true)
+if [[ -n "$LATEST_RUN" ]]; then
+  echo "Latest run: $LATEST_RUN"
+  if [[ -f "$LATEST_RUN/orchestrator.log" ]]; then
+    LAST_LINE=$(tail -n 1 "$LATEST_RUN/orchestrator.log")
+    echo "Last orchestrator event: $LAST_LINE"
+    LAST_TS=$(echo "$LAST_LINE" | sed -E 's/^\[([^]]+)\].*/\1/' || true)
+    if [[ -n "$LAST_TS" ]]; then
+      NOW_EPOCH=$(epoch_now)
+      LAST_EPOCH=$(python3 -c 'from datetime import datetime; import sys; print(int(datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).timestamp()))' "$LAST_TS" 2>/dev/null || echo "")
+      if [[ -n "$LAST_EPOCH" ]]; then
+        echo "Heartbeat age: $((NOW_EPOCH - LAST_EPOCH))s"
+      fi
+    fi
+  fi
+
+  if [[ -f "$LATEST_RUN/events.jsonl" ]]; then
+    echo "Recent events:"
+    tail -n 5 "$LATEST_RUN/events.jsonl"
+  fi
+else
+  echo "Latest run: (none)"
+fi
+
+# Hook state files
+for hook in review documentation validation; do
+  state_file="$SPRINT_DIR/.hook-${hook}.state.json"
+  if [[ ! -f "$state_file" ]] && [[ -n "${LATEST_RUN:-}" ]]; then
+    state_file="$LATEST_RUN/hook-runtime/.hook-${hook}.state.json"
+  fi
+  if [[ -f "$state_file" ]]; then
+    pid=$(jq -r '.pid // ""' "$state_file")
+    status=$(jq -r '.status // "unknown"' "$state_file")
+    last_hb=$(jq -r '.last_heartbeat // "unknown"' "$state_file")
+    running="no"
+    if [[ -n "$pid" ]] && process_alive "$pid"; then
+      running="yes"
+    fi
+    echo "Hook state [$hook]: status=$status pid=${pid:-none} alive=$running last_heartbeat=$last_hb"
+  fi
+done
