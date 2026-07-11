@@ -11,15 +11,16 @@ Operate an autonomous implementation loop as a resumable state machine, not a on
 
 When a user asks how to start, preflight the repository instead of explaining sprint internals first:
 
-1. Confirm a Git repository; Bash, Git, `jq`, and Python 3; a supported agent CLI or custom command;
-   a durable `SPEC.md` or equivalent; and credible fast chunk plus comprehensive sprint validation
-   commands. Node.js/npm and `npx` are required when the skill still needs to be installed or updated.
+1. Confirm a Git repository; Bash, Git, `jq`, and Python 3; an explicit harness and model (or a fully
+   owned custom command); positive sprint and per-chunk turn budgets; a durable `SPEC.md` or
+   equivalent; and credible fast chunk plus comprehensive sprint validation commands. Node.js/npm
+   and `npx` are required when the skill still needs to be installed or updated.
 2. Read repository agent instructions and the spec before choosing commands or planning work.
-3. Install or upgrade the deterministic runtime. Keep unattended authorization off.
+3. Install or upgrade the deterministic runtime with the reviewed harness, model, and budgets.
 4. Break the spec into dependency-ordered sprints, create only the first sprint under
    `.ralph/sprints/`, set `CURRENT_SPRINT`, and validate the complete setup.
-5. Tell the operator what to review and stop before running unless they explicitly authorize the
-   autonomous loop.
+5. Tell the operator what to review and stop before running. Invoking `.ralph/loop.sh` starts the
+   autonomous loop; do not add or require a redundant authorization boolean.
 
 Do not ask the operator to hand-build `.ralph/` or sprint files. This package exposes one skill,
 `$ralph-workflows`; initialization, spec breakdown, sprint creation, chunk design, status, and review
@@ -54,20 +55,20 @@ not run arbitrary lifecycle hooks.
 Install the bundled hardened Bash runtime only when the user asks to initialize or repair Ralph:
 
 ```bash
-python3 <skill-dir>/scripts/ralph.py init --repo <repository> --agent <agent> --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
+python3 <skill-dir>/scripts/ralph.py init --repo <repository> --agent <agent> --model '<model>' --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
 ```
 
 For a parent directory containing independent child Git repositories, use multi-repo mode:
 
 ```bash
-python3 <skill-dir>/scripts/ralph.py init --repo <parent> --mode multi-repo --repos <repo-a> <repo-b> --primary-repo <repo-a> --agent <agent> --chunk-validation-command '<fast cross-repo command>' --sprint-validation-command '<full cross-repo command>'
+python3 <skill-dir>/scripts/ralph.py init --repo <parent> --mode multi-repo --repos <repo-a> <repo-b> --primary-repo <repo-a> --agent <agent> --model '<model>' --chunk-validation-command '<fast cross-repo command>' --sprint-validation-command '<full cross-repo command>'
 ```
 
 Initialization is non-destructive: it refuses an existing `.ralph/` unless `--update-runtime` is
-explicit, preserves configuration and sprint state during an update, and leaves autonomous execution
-disarmed. Add `--approve-unattended` only when the user has authorized an autonomous run. Disable a
-hook explicitly when it is genuinely outside the repository's workflow; skipped hooks remain visible
-in the manifest instead of being reported as completed work.
+explicit and preserves configuration and sprint state during an update. Standard harnesses require
+an explicit model. Sprint and per-chunk agent-turn budgets default to 30 and 5 and can be set with
+`--max-sprint-iterations` and `--max-chunk-iterations`. Disable a hook explicitly when it is genuinely
+outside the repository's workflow; skipped hooks remain visible in the manifest.
 
 Upgrade an existing runtime without replacing operator configuration, sprints, logs, or scratchpad
 state. Usually the stored validation configuration makes `upgrade --repo <repository>` sufficient.

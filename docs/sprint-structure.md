@@ -156,7 +156,7 @@ and leave a durable repair handoff.
 
 ```
 <project>/.ralph/
-├── config.env                      # Agent, max iterations, CURRENT_SPRINT, timeouts
+├── config.env                      # Harness, model, sprint/chunk turn budgets, CURRENT_SPRINT, timeouts
 ├── loop.sh                         # Bash loop script (heartbeat, resume, state-delta)
 ├── status.sh                       # Operator status command
 ├── lib/

@@ -78,10 +78,10 @@ def render_config(arguments: argparse.Namespace) -> str:
     values.update(
         {
             "RALPH_AGENT": arguments.agent,
+            "RALPH_AGENT_MODEL": shell_value(arguments.model or ""),
             "RALPH_AGENT_COMMAND": shell_value(arguments.agent_command or ""),
-            "RALPH_UNATTENDED_APPROVED": "true"
-            if arguments.approve_unattended
-            else "false",
+            "MAX_SPRINT_ITERATIONS": str(arguments.max_sprint_iterations),
+            "MAX_CHUNK_ITERATIONS": str(arguments.max_chunk_iterations),
             "RALPH_CHUNK_VALIDATION_COMMAND": shell_value(
                 arguments.chunk_validation_command or ""
             ),
@@ -158,6 +158,12 @@ def install(arguments: argparse.Namespace) -> Path:
             f"Refusing to overwrite existing runtime: {target}; use --update-runtime"
         )
     if not target.exists():
+        if arguments.agent != "custom" and not arguments.model:
+            raise RalphError(
+                "New runtimes require --model for the selected agent harness"
+            )
+        if arguments.max_sprint_iterations < 1 or arguments.max_chunk_iterations < 1:
+            raise RalphError("Iteration budgets must be positive integers")
         if (
             not arguments.disable_chunk_validation
             and not arguments.chunk_validation_command
@@ -244,6 +250,18 @@ def update_config(text: str, updates: dict[str, str]) -> str:
     return "\n".join(output) + "\n"
 
 
+def remove_config_keys(text: str, keys: set[str]) -> str:
+    output: list[str] = []
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0]
+            if key in keys:
+                continue
+        output.append(raw)
+    return "\n".join(output) + "\n"
+
+
 def load_metadata(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
@@ -285,6 +303,30 @@ def upgrade(arguments: argparse.Namespace) -> Path:
         or config.get("RALPH_SPRINT_VALIDATION_COMMAND", "")
         or config.get("RALPH_TEST_COMMAND", "")
     )
+    model = arguments.model or config.get("RALPH_AGENT_MODEL", "")
+    agent = config.get("RALPH_AGENT", "")
+    if agent != "custom" and not model:
+        raise RalphError(
+            "Upgrade requires --model because the installed standard harness has no explicit model"
+        )
+    max_sprint_iterations = (
+        arguments.max_sprint_iterations
+        if arguments.max_sprint_iterations is not None
+        else config.get("MAX_SPRINT_ITERATIONS")
+        or config.get("MAX_ITERATIONS")
+        or "30"
+    )
+    max_chunk_iterations = (
+        arguments.max_chunk_iterations
+        if arguments.max_chunk_iterations is not None
+        else config.get("MAX_CHUNK_ITERATIONS") or "5"
+    )
+    for label, value in (
+        ("MAX_SPRINT_ITERATIONS", str(max_sprint_iterations)),
+        ("MAX_CHUNK_ITERATIONS", str(max_chunk_iterations)),
+    ):
+        if not value.isdigit() or int(value) < 1:
+            raise RalphError(f"{label} must be a positive integer")
     chunk_enabled = (
         "false"
         if arguments.disable_chunk_validation
@@ -326,9 +368,15 @@ def upgrade(arguments: argparse.Namespace) -> Path:
             raise RalphError(f"Refusing managed path outside runtime: {destination}")
 
     migrated = update_config(
-        config_path.read_text(encoding="utf-8"),
+        remove_config_keys(
+            config_path.read_text(encoding="utf-8"),
+            {"RALPH_UNATTENDED_APPROVED", "MAX_ITERATIONS"},
+        ),
         {
             "RALPH_MODE": mode,
+            "RALPH_AGENT_MODEL": shell_value(model),
+            "MAX_SPRINT_ITERATIONS": str(max_sprint_iterations),
+            "MAX_CHUNK_ITERATIONS": str(max_chunk_iterations),
             "RALPH_CHUNK_VALIDATION_ENABLED": chunk_enabled,
             "RALPH_SPRINT_VALIDATION_ENABLED": sprint_enabled,
             "RALPH_CHUNK_VALIDATION_COMMAND": shell_value(chunk_command),
@@ -586,12 +634,30 @@ def validate(repo: Path) -> dict[str, Any]:
                 else f"{agent} executable not found on PATH",
             }
         )
-    if config.get("RALPH_UNATTENDED_APPROVED") != "true":
+    if agent in AGENTS - {"custom"} and not config.get("RALPH_AGENT_MODEL"):
         findings.append(
             {
-                "status": "warn",
-                "check": "authorization",
-                "detail": "runtime is safely disarmed",
+                "status": "fail",
+                "check": "agent-model",
+                "detail": "standard harness requires explicit RALPH_AGENT_MODEL",
+            }
+        )
+    elif agent:
+        findings.append(
+            {
+                "status": "pass",
+                "check": "agent-model",
+                "detail": config.get("RALPH_AGENT_MODEL") or "owned by custom command",
+            }
+        )
+    for key in ("MAX_SPRINT_ITERATIONS", "MAX_CHUNK_ITERATIONS"):
+        raw_budget = config.get(key, "")
+        valid_budget = raw_budget.isdigit() and int(raw_budget) > 0
+        findings.append(
+            {
+                "status": "pass" if valid_budget else "fail",
+                "check": f"budget:{key.lower()}",
+                "detail": raw_budget if valid_budget else "must be a positive integer",
             }
         )
     if config.get("RALPH_CHUNK_VALIDATION_ENABLED", "true") == "true" and not config.get(
@@ -681,6 +747,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init_parser.add_argument("--primary-repo")
     init_parser.add_argument("--agent", choices=sorted(AGENTS), default="codex")
+    init_parser.add_argument("--model")
     init_parser.add_argument(
         "--agent-command",
         help="Trusted custom shell command; receives RALPH_PROMPT_FILE and RALPH_PROJECT_ROOT.",
@@ -692,7 +759,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Deprecated alias for --sprint-validation-command.",
     )
     init_parser.add_argument("--e2e-command")
-    init_parser.add_argument("--approve-unattended", action="store_true")
+    init_parser.add_argument("--max-sprint-iterations", type=int, default=30)
+    init_parser.add_argument("--max-chunk-iterations", type=int, default=5)
     init_parser.add_argument("--disable-review", action="store_true")
     init_parser.add_argument("--disable-documentation", action="store_true")
     init_parser.add_argument("--disable-tests", action="store_true")
@@ -703,6 +771,9 @@ def build_parser() -> argparse.ArgumentParser:
         "upgrade", help="Safely refresh an installed runtime and migrate validation gates."
     )
     upgrade_parser.add_argument("--repo", type=Path, default=Path.cwd())
+    upgrade_parser.add_argument("--model")
+    upgrade_parser.add_argument("--max-sprint-iterations", type=int)
+    upgrade_parser.add_argument("--max-chunk-iterations", type=int)
     upgrade_parser.add_argument("--chunk-validation-command")
     upgrade_parser.add_argument("--sprint-validation-command")
     upgrade_parser.add_argument("--disable-chunk-validation", action="store_true")
@@ -726,12 +797,11 @@ def main() -> int:
         if arguments.command == "init":
             target = install(arguments)
             print(f"Installed Ralph runtime {runtime_version()}: {target}")
-            if arguments.approve_unattended:
-                print(
-                    "Unattended execution was explicitly approved for this generated configuration."
-                )
-            else:
-                print("Runtime remains disarmed until RALPH_UNATTENDED_APPROVED=true.")
+            print(
+                f"Harness={arguments.agent} model={arguments.model or 'custom-command'} "
+                f"sprint-turns={arguments.max_sprint_iterations} "
+                f"chunk-turns={arguments.max_chunk_iterations}"
+            )
             return 0
         if arguments.command == "validate":
             report = validate(arguments.repo)

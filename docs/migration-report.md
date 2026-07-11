@@ -55,7 +55,7 @@
 | File | Changes |
 |------|---------|
 | `CLAUDE.md` | Directory structure, post-sprint hooks, execution workflow, git commits (scoped markers), new "Heartbeat & Monitoring" section, new "Idle Timeout Rollout" section |
-| `AGENTS.md` | Directory structure, execution workflow, completion sequence (scoped markers), codex flag fix (`exec --yolo`) |
+| `AGENTS.md` | Directory structure, execution workflow, completion sequence, and historical Codex adapter guidance later superseded by v0.6 harness tests |
 | `docs/sprint-structure.md` | `RALPH_COMPLETE` → `RALPH_CHUNK_COMPLETE`, scoped markers note, state-delta validation, updated directory structure |
 | `docs/definition-of-terms.md` | Three scoped marker subsections, new terms: Heartbeat, Idle Timeout, Manifest Phase, State-Delta Validation, Reconciliation |
 
@@ -80,7 +80,7 @@
 | Project-specific test paths (e.g., `backend/tests/sprint/`) | Templates use generic `tests/sprint/` pattern. Project-specific paths belong in project config, not canonical templates. |
 | Blackbird's hardcoded repo names (`api`, `frontend`) | Multi-repo templates use `REPOS` env var from config.env. |
 | `format-stream.py` / `format-codex-stream.py` updates | These formatters were already present in `templates/shared/` and didn't need hardening changes. |
-| Codex-specific `--model` flag | Codex flag was already corrected to `exec --yolo` in a prior commit (bcbd9d0). |
+| Codex-specific `--model` flag | Historical `exec --yolo` behavior from `bcbd9d0` was superseded in v0.6 by an explicit model and the current documented bypass flag. |
 | Blackbird's `docs/ralph-orchestrator-hardening-summary.md` | This was project-specific documentation. The patterns it describes are now encoded in the canonical templates and docs. |
 
 ---
@@ -177,4 +177,4 @@ EOF
 | 25 | docs/sprint-structure.md updated | Audited |
 | 26 | docs/definition-of-terms.md updated | Audited |
 | 27 | SCRATCHPAD.md references removed (per commit 5b88f83) | Cleaned |
-| 28 | Codex flag corrected to `exec --yolo` | Verified |
+| 28 | Codex flag corrected to `exec --yolo` at the time; superseded by v0.6 adapter validation | Historical |

@@ -8,8 +8,10 @@ source "$SCRIPT_DIR/config.env"
 source "$SCRIPT_DIR/lib/ralph-common.sh"
 
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-MAX_ITERATIONS="${MAX_ITERATIONS:-30}"
+MAX_SPRINT_ITERATIONS="${MAX_SPRINT_ITERATIONS:-${MAX_ITERATIONS:-30}}"
+MAX_CHUNK_ITERATIONS="${MAX_CHUNK_ITERATIONS:-5}"
 AGENT="${RALPH_AGENT:-${AGENT:-}}"
+MODEL="${RALPH_AGENT_MODEL:-}"
 CURRENT_SPRINT="${CURRENT_SPRINT:-}"
 HEARTBEAT_SEC="${HEARTBEAT_SEC:-30}"
 AGENT_IDLE_TIMEOUT_SEC="${AGENT_IDLE_TIMEOUT_SEC:-0}"
@@ -31,9 +33,15 @@ if [[ -n "$missing" ]]; then
   echo "$missing"
   exit 12
 fi
-if [[ "${RALPH_UNATTENDED_APPROVED:-false}" != "true" ]]; then
-  echo "Refusing autonomous execution until RALPH_UNATTENDED_APPROVED=true in .ralph/config.env"
-  exit 14
+for budget in "$MAX_SPRINT_ITERATIONS" "$MAX_CHUNK_ITERATIONS"; do
+  if [[ ! "$budget" =~ ^[1-9][0-9]*$ ]]; then
+    echo "MAX_SPRINT_ITERATIONS and MAX_CHUNK_ITERATIONS must be positive integers"
+    exit 12
+  fi
+done
+if [[ -z "${RALPH_AGENT_COMMAND:-}" && -z "$MODEL" ]]; then
+  echo "RALPH_AGENT_MODEL is required for the $AGENT harness"
+  exit 12
 fi
 if [[ "$CHUNK_VALIDATION_ENABLED" == "true" && -z "$CHUNK_VALIDATION_COMMAND" ]]; then
   echo "RALPH_CHUNK_VALIDATION_COMMAND is required while chunk validation is enabled"
@@ -94,6 +102,7 @@ if [[ ! -f "$MANIFEST_FILE" ]] || ! jq -e '.start_commit' "$MANIFEST_FILE" >/dev
   "end_commit": null,
   "completed_at": null,
   "iterations": 0,
+  "agent_turns": [],
   "commits": [],
   "validation": {"chunk_attempts": []},
   "phase": "running",
@@ -109,6 +118,7 @@ fi
 ensure_manifest_schema() {
   manifest_update_locked "$MANIFEST_FILE" '
     .phase = (.phase // "running")
+    | .agent_turns = (.agent_turns // [])
     | .hooks = (.hooks // {})
     | .hooks.review = (.hooks.review // {"status":"pending","completed_at":null,"reason":null})
     | .hooks.documentation = (.hooks.documentation // {"status":"pending","completed_at":null,"reason":null})
@@ -178,6 +188,18 @@ passed_chunk_ids() {
 
 next_incomplete_chunk_id() {
   jq -r '[.chunks[] | select(.passes != true)][0].id // empty' "$CHUNKS_FILE"
+}
+
+chunk_turn_count() {
+  local chunk_id="$1"
+  jq --argjson chunk "$chunk_id" '[.agent_turns[] | select(.chunk_id == $chunk)] | length' "$MANIFEST_FILE"
+}
+
+record_agent_turn() {
+  local chunk_id="$1" iteration="$2" started_at="$3"
+  manifest_update \
+    --argjson chunk "$chunk_id" --argjson iter "$iteration" --arg started "$started_at" \
+    '.agent_turns += [{chunk_id:$chunk,iteration:$iter,started_at:$started}]'
 }
 
 reset_chunk_pass() {
@@ -446,12 +468,13 @@ run_agent_with_watchdog() {
   return "$agent_exit"
 }
 
-echo "Starting Ralph loop: agent=$AGENT, max=$MAX_ITERATIONS"
+echo "Starting Ralph loop: agent=$AGENT, model=${MODEL:-custom-command}"
+echo "Turn budgets: sprint=$MAX_SPRINT_ITERATIONS, per-chunk=$MAX_CHUNK_ITERATIONS"
 echo "Sprint: $CURRENT_SPRINT"
 echo "Logs: $LOG_DIR"
 echo "---"
-log_orchestrator "loop_started: agent=$AGENT sprint=$CURRENT_SPRINT max_iterations=$MAX_ITERATIONS resume=$RESUME force_hooks=$FORCE_HOOKS"
-log_event "loop" "started" "agent=$AGENT sprint=$CURRENT_SPRINT"
+log_orchestrator "loop_started: agent=$AGENT model=${MODEL:-custom-command} sprint=$CURRENT_SPRINT max_sprint_iterations=$MAX_SPRINT_ITERATIONS max_chunk_iterations=$MAX_CHUNK_ITERATIONS resume=$RESUME force_hooks=$FORCE_HOOKS"
+log_event "loop" "started" "agent=$AGENT model=${MODEL:-custom-command} sprint=$CURRENT_SPRINT"
 
 ensure_manifest_schema
 
@@ -476,20 +499,18 @@ if all_chunks_pass_fn; then
   exit 0
 fi
 
-START_ITERATION=1
-if [[ "$RESUME" == "true" ]]; then
-  LAST_ITER=$(jq -r '.iterations // 0' "$MANIFEST_FILE" 2>/dev/null || echo 0)
-  if [[ "$LAST_ITER" =~ ^[0-9]+$ ]] && (( LAST_ITER >= 1 )); then
-    START_ITERATION=$((LAST_ITER + 1))
-  fi
-  if (( START_ITERATION > MAX_ITERATIONS )); then
-    START_ITERATION=$MAX_ITERATIONS
-  fi
+RECORDED_TURNS=$(jq -r '[.iterations // 0, ((.agent_turns // []) | length)] | max' "$MANIFEST_FILE" 2>/dev/null || echo 0)
+START_ITERATION=$((RECORDED_TURNS + 1))
+if (( START_ITERATION > MAX_SPRINT_ITERATIONS )); then
+  echo "Sprint turn budget ($MAX_SPRINT_ITERATIONS) was already exhausted"
+  log_orchestrator "max_sprint_iterations_reached: $MAX_SPRINT_ITERATIONS"
+  log_event "budget" "exhausted" "sprint_max=$MAX_SPRINT_ITERATIONS"
+  exit 2
 fi
 
-for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
+for i in $(seq "$START_ITERATION" "$MAX_SPRINT_ITERATIONS"); do
   CURRENT_ITERATION="$i"
-  echo "[Iteration $i/$MAX_ITERATIONS]"
+  echo "[Iteration $i/$MAX_SPRINT_ITERATIONS]"
   log_orchestrator "iteration_started: $i"
   log_event "iteration" "started" "iteration=$i"
 
@@ -499,6 +520,14 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
 
   BEFORE_PASS_IDS=$(passed_chunk_ids)
   EXPECTED_CHUNK_ID=$(next_incomplete_chunk_id)
+  CHUNK_TURNS=$(chunk_turn_count "$EXPECTED_CHUNK_ID")
+  if (( CHUNK_TURNS >= MAX_CHUNK_ITERATIONS )); then
+    echo "Chunk $EXPECTED_CHUNK_ID reached its $MAX_CHUNK_ITERATIONS-turn budget"
+    log_orchestrator "chunk_turn_budget_reached: chunk=$EXPECTED_CHUNK_ID turns=$CHUNK_TURNS limit=$MAX_CHUNK_ITERATIONS"
+    log_event "budget" "exhausted" "chunk=$EXPECTED_CHUNK_ID turns=$CHUNK_TURNS limit=$MAX_CHUNK_ITERATIONS"
+    exit 15
+  fi
+  record_agent_turn "$EXPECTED_CHUNK_ID" "$i" "$(now_iso)"
   BEFORE_HEAD=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")
 
   set +e
@@ -634,7 +663,7 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
   sleep 2
 done
 
-echo "Max iterations ($MAX_ITERATIONS) reached without completion"
-log_orchestrator "max_iterations_reached: $MAX_ITERATIONS"
-log_event "loop" "max_iterations_reached" "max=$MAX_ITERATIONS"
+echo "Sprint turn budget ($MAX_SPRINT_ITERATIONS) reached without completion"
+log_orchestrator "max_sprint_iterations_reached: $MAX_SPRINT_ITERATIONS"
+log_event "budget" "exhausted" "sprint_max=$MAX_SPRINT_ITERATIONS"
 exit 2

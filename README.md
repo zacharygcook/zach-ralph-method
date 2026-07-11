@@ -2,7 +2,7 @@
 
 A hardened, observable autonomous coding loop for one repository or a coordinated group of repositories.
 
-Ralph gives a coding agent a bounded chunk of work, lets it implement and verify that chunk in a fresh context, records durable handoff state, and repeats. The runtime treats autonomy as an operator-controlled capability: it installs disarmed, fingerprints its managed files, validates real state changes before accepting completion, and leaves interrupted post-sprint work resumable.
+Ralph gives a coding agent a bounded chunk of work, lets it implement and verify that chunk in a fresh context, records durable handoff state, and repeats. The runtime makes autonomy inspectable: it requires an explicit harness and model, enforces sprint and per-chunk turn budgets, fingerprints managed files, validates real state changes before accepting completion, and leaves interrupted post-sprint work resumable.
 
 ```text
 SPEC → PLAN → CHUNKS → IMPLEMENT → VERIFY → COMMIT
@@ -18,7 +18,7 @@ SPEC → PLAN → CHUNKS → IMPLEMENT → VERIFY → COMMIT
 
 - **Fresh context, durable memory.** Each iteration starts a new agent process and reads `SCRATCHPAD.md`, plans, specs, and chunk state from disk.
 - **Evidence-backed completion.** A completion marker counts only when the number of passing chunks increases.
-- **Operator-owned safety.** Unattended execution and broad automatic staging have separate, explicit authorization gates. Both default off.
+- **Operator-owned controls.** Harness, model, sprint turn budget, per-chunk turn budget, and validation are explicit. Broad automatic staging remains separately gated and defaults off.
 - **Crash-safe orchestration.** Manifests, locks, heartbeats, structured events, state files, and `--resume` make long runs inspectable and recoverable.
 - **First-class multi-repo work.** Each child repository keeps its own Git boundary and start/end commit range.
 - **Project-neutral hooks.** Review, documentation, test, and E2E commands are configured by the adopting project rather than assumed by the runtime.
@@ -59,12 +59,12 @@ stateful `.ralph/` runtime.
 After the `npx skills add` command, initialize from the vendored copy:
 
 ```bash
-python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo . --agent codex --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo . --agent codex --model "your model" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
 ```
 
-The installer creates `.ralph/` but leaves autonomous execution disarmed. Review
-`.ralph/config.env`, create a sprint, then explicitly set `RALPH_UNATTENDED_APPROVED=true` only when
-you are ready.
+The installer creates `.ralph/` with a 30-turn sprint budget and a five-turn per-chunk budget unless
+you pass `--max-sprint-iterations` and `--max-chunk-iterations`. Review those values, the selected
+harness/model, and validation commands before running.
 
 ### Update an existing project
 
@@ -75,7 +75,7 @@ npx skills@latest update ralph-workflows --project -y
 python3 .agents/skills/ralph-workflows/scripts/ralph.py upgrade --repo .
 ```
 
-The upgrade preserves configuration, authorization, sprints, logs, and scratchpads. A legacy runtime
+The upgrade preserves configuration, sprints, logs, and scratchpads. A legacy runtime
 without validation gates stops and requests the missing commands instead of guessing them.
 
 ### Restore skills from a committed lockfile
@@ -104,8 +104,7 @@ Before the first sprint, have:
   lint, typecheck, build, and E2E scripts are ideal inputs.
 
 On Windows, run the Bash runtime in a compatible environment such as WSL. If the repository does
-not have a useful spec or validation commands yet, create those before authorizing an autonomous
-loop.
+not have a useful spec or validation commands yet, create those before starting a loop.
 
 ### 2. Ask the skill to prepare the first sprint
 
@@ -118,9 +117,10 @@ Ask your coding agent:
 ```text
 Use $ralph-workflows to preflight this repository for a Ralph loop. Read SPEC.md and the repository's
 agent instructions. Identify the fast chunk-validation command and comprehensive sprint-validation
-command. Initialize or upgrade .ralph, break the spec into dependency-ordered sprints, create only
-the first sprint, set CURRENT_SPRINT, validate the complete setup, and stop before unattended
-execution. Explain any blockers and summarize exactly what I should review.
+command. Confirm the harness, exact model, maximum sprint turns, and maximum turns per chunk with me.
+Initialize or upgrade .ralph, break the spec into dependency-ordered sprints, create only the first
+sprint, set CURRENT_SPRINT, validate the complete setup, and stop before running. Explain any blockers
+and summarize exactly what I should review.
 ```
 
 You do **not** manually create `.ralph/` or its sprint files. The deterministic installer creates the
@@ -134,16 +134,17 @@ validation commands. To ask the skill for a readiness check:
 
 ```text
 Use $ralph-workflows to inspect the current Ralph sprint and tell me whether it is safe and complete
-enough to run. Do not start the loop or change authorization.
+enough to run. Confirm the configured harness, model, sprint turn budget, and per-chunk turn budget.
+Do not start the loop.
 ```
 
 The current sprint lives at the path named by `CURRENT_SPRINT` in `.ralph/config.env`. Every sprint
 contains `README.md`, `IMPLEMENTATION_PLAN.md`, `relevant-specs.md`, `chunks.json`, `prompt.md`, and
 `SCRATCHPAD.md`.
 
-### 4. Arm and run deliberately
+### 4. Confirm and run deliberately
 
-After review, set `RALPH_UNATTENDED_APPROVED=true` in `.ralph/config.env`, then run:
+After reviewing `.ralph/config.env`, run:
 
 ```bash
 ./.ralph/loop.sh
@@ -171,7 +172,18 @@ rerunning completed post-sprint hooks.
 
 ## Supported agent harnesses
 
-The generated runtime supports Claude Code, Codex, Droid, Amp, OpenCode, and a trusted custom command. CLI flags evolve, so `RALPH_AGENT_COMMAND` provides an escape hatch without changing the orchestrator.
+The generated runtime supports Claude Code, Codex, Droid, Amp, OpenCode, and a trusted custom
+command. The selected model is never implicit:
+
+| Harness | `RALPH_AGENT_MODEL` meaning |
+| --- | --- |
+| Claude Code, Codex, Droid | Exact value passed through `--model`. |
+| OpenCode | Provider/model value passed through `--model`. |
+| Amp | Amp mode passed through `--mode` (`deep`, `free`, `large`, `rush`, or `smart`). |
+| Custom command | Exported as `RALPH_AGENT_MODEL`; the command owns how to use it. |
+
+CLI flags evolve, so adapter argument construction is regression-tested and `RALPH_AGENT_COMMAND`
+provides an immediate escape hatch without changing the orchestrator.
 
 Custom commands receive:
 
@@ -180,8 +192,12 @@ Custom commands receive:
 
 ## Safety model
 
-The default installation will not run autonomously. It also will not auto-commit. A project must set
-`RALPH_AUTO_COMMIT=I_ACCEPT_GIT_ADD_ALL` to deliberately enable broad backup commits. Normal agent
+Running `.ralph/loop.sh` is the operator's decision to start the autonomous loop; there is no second
+boolean that restates that intent. Before launching, validation requires an available harness,
+explicit model, positive sprint and per-chunk turn budgets, and configured validation commands.
+
+The runtime does not auto-commit broadly. A project must set
+`RALPH_AUTO_COMMIT=I_ACCEPT_GIT_ADD_ALL` to deliberately enable broad backup commits; normal agent
 prompts instruct scoped staging instead.
 
 The migration-aware upgrade refreshes only managed runtime files. It preserves operator

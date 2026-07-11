@@ -34,11 +34,16 @@ fi
 echo "Sprint: $SPRINT"
 echo "Directory: $SPRINT_DIR"
 echo "Repos: $REPOS"
+echo "Harness: ${RALPH_AGENT:-unset}"
+echo "Model: ${RALPH_AGENT_MODEL:-custom-command}"
+echo "Turn budgets: sprint=${MAX_SPRINT_ITERATIONS:-unset}, per-chunk=${MAX_CHUNK_ITERATIONS:-unset}"
 
 # Manifest info
 if [[ -f "$MANIFEST" ]]; then
   echo "Manifest phase: $(jq -r '.phase // "unknown"' "$MANIFEST")"
   echo "Iterations: $(jq -r '.iterations // 0' "$MANIFEST")"
+  echo "Agent turns by chunk:"
+  jq -r '(.agent_turns // []) | group_by(.chunk_id)[] | "  - chunk \(.[0].chunk_id): \(length)"' "$MANIFEST"
 
   echo "Repos:"
   for repo in $REPOS; do

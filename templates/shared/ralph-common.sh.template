@@ -133,41 +133,44 @@ run_agent() {
   local agent="${1:-}"
   local prompt_file="${2:-}"
   local project_root="${3:-$PWD}"
+  local model="${RALPH_AGENT_MODEL:-}"
 
-  [[ "${RALPH_UNATTENDED_APPROVED:-false}" == "true" ]] || {
-    echo "Refusing unattended agent execution until RALPH_UNATTENDED_APPROVED=true"
-    return 14
-  }
   [[ -f "$prompt_file" ]] || { echo "Prompt file not found: $prompt_file"; return 14; }
 
   if [[ -n "${RALPH_AGENT_COMMAND:-}" ]]; then
     export RALPH_PROMPT_FILE="$prompt_file"
     export RALPH_PROJECT_ROOT="$project_root"
+    export RALPH_AGENT_MODEL="$model"
     (cd "$project_root" && bash -lc "$RALPH_AGENT_COMMAND")
     return $?
   fi
 
+  [[ -n "$model" ]] || {
+    echo "RALPH_AGENT_MODEL is required for the $agent harness"
+    return 12
+  }
+
   case "$agent" in
     claude)
       require_commands claude || return 12
-      (cd "$project_root" && claude --dangerously-skip-permissions -p "$(cat "$prompt_file")" \
+      (cd "$project_root" && claude --dangerously-skip-permissions --model "$model" -p "$(cat "$prompt_file")" \
         --output-format=stream-json --include-partial-messages --verbose)
       ;;
     codex)
       require_commands codex || return 12
-      (cd "$project_root" && codex exec --yolo --json "$(cat "$prompt_file")")
+      (cd "$project_root" && codex exec --dangerously-bypass-approvals-and-sandbox --model "$model" --json "$(cat "$prompt_file")")
       ;;
     amp)
       require_commands amp || return 12
-      (cd "$project_root" && amp run --autonomous --prompt-file "$prompt_file")
+      (cd "$project_root" && amp --dangerously-allow-all --mode "$model" --execute "$(cat "$prompt_file")" --stream-json)
       ;;
     opencode)
       require_commands opencode || return 12
-      (cd "$project_root" && opencode --auto --prompt "$prompt_file")
+      (cd "$project_root" && opencode run --auto --model "$model" --format json "$(cat "$prompt_file")")
       ;;
     droid)
       require_commands droid || return 12
-      (cd "$project_root" && droid exec --auto high -f "$prompt_file")
+      (cd "$project_root" && droid exec --auto high --model "$model" -f "$prompt_file")
       ;;
     *)
       echo "Unknown or missing RALPH_AGENT: ${agent:-none}; configure RALPH_AGENT_COMMAND for another client"

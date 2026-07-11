@@ -25,7 +25,7 @@ npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --c
 Then initialize the parent runtime from the vendored package:
 
 ```bash
-python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo /path/to/product --mode multi-repo --repos service dashboard mobile --primary-repo service --agent codex --chunk-validation-command "your fast validation command" --sprint-validation-command "your full validation command"
+python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo /path/to/product --mode multi-repo --repos service dashboard mobile --primary-repo service --agent codex --model "your model" --chunk-validation-command "your fast validation command" --sprint-validation-command "your full validation command"
 ```
 
 The installer verifies every named child contains `.git`, records the topology in `.runtime-manifest.json`, and writes `RALPH_REPOS` plus `RALPH_PRIMARY_REPO` to `config.env`.

@@ -30,7 +30,9 @@ class DocumentationContractTest(unittest.TestCase):
             self.assertIn(prerequisite, quick_start)
         self.assertIn("Use $ralph-workflows to preflight", quick_start)
         self.assertIn("You do **not** manually create `.ralph/`", quick_start)
-        self.assertIn("RALPH_UNATTENDED_APPROVED=true", quick_start)
+        self.assertIn("exact model", quick_start)
+        self.assertIn("maximum sprint turns", quick_start)
+        self.assertIn("maximum turns per chunk", quick_start)
         self.assertIn("./.ralph/loop.sh", quick_start)
         self.assertIn("Which workflow should I ask for?", quick_start)
 
