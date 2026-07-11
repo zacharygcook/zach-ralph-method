@@ -31,16 +31,12 @@ else
 fi
 mkdir -p "$HOOK_RUNTIME_DIR"
 
-declare -A FINAL_HOOK_STATUS=(
-  [review]="pending"
-  [documentation]="pending"
-  [tests]="pending"
-)
-declare -A FINAL_HOOK_REASON=(
-  [review]="null"
-  [documentation]="null"
-  [tests]="null"
-)
+FINAL_REVIEW_STATUS="pending"
+FINAL_REVIEW_REASON="null"
+FINAL_DOCUMENTATION_STATUS="pending"
+FINAL_DOCUMENTATION_REASON="null"
+FINAL_TESTS_STATUS="pending"
+FINAL_TESTS_REASON="null"
 
 log_event() {
   append_event "$EVENT_LOG" "$1" "$2" "$3"
@@ -98,15 +94,18 @@ record_hook_result() {
   local hook_key="$1"
   local status="$2"
   local reason="${3:-null}"
-  FINAL_HOOK_STATUS["$hook_key"]="$status"
-  FINAL_HOOK_REASON["$hook_key"]="$reason"
+  case "$hook_key" in
+    review) FINAL_REVIEW_STATUS="$status"; FINAL_REVIEW_REASON="$reason" ;;
+    documentation) FINAL_DOCUMENTATION_STATUS="$status"; FINAL_DOCUMENTATION_REASON="$reason" ;;
+    tests) FINAL_TESTS_STATUS="$status"; FINAL_TESTS_REASON="$reason" ;;
+    *) return "$EXIT_VALIDATION" ;;
+  esac
 }
 
 persist_hook_results() {
-  local hook_key
-  for hook_key in review documentation tests; do
-    update_manifest_hook "$hook_key" "${FINAL_HOOK_STATUS[$hook_key]}" "${FINAL_HOOK_REASON[$hook_key]}"
-  done
+  update_manifest_hook "review" "$FINAL_REVIEW_STATUS" "$FINAL_REVIEW_REASON"
+  update_manifest_hook "documentation" "$FINAL_DOCUMENTATION_STATUS" "$FINAL_DOCUMENTATION_REASON"
+  update_manifest_hook "tests" "$FINAL_TESTS_STATUS" "$FINAL_TESTS_REASON"
 }
 
 read_hook_pid_from_state() {
