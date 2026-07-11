@@ -109,13 +109,16 @@ def create_sprint(root: Path, name: str = "1-demo", repo: str | None = None) -> 
 
 class RalphRuntimeTest(unittest.TestCase):
     def test_self_contained_skill_package_matches_canonical_runtime(self) -> None:
-        result = run(
-            sys.executable,
-            str(MODULE_PATH.parent / "sync_skill_package.py"),
-            "check",
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        packaged = MODULE_PATH.parents[1] / "skill" / "scripts" / "ralph.py"
+        sync_script = MODULE_PATH.parent / "sync_skill_package.py"
+        if sync_script.is_file():
+            result = run(sys.executable, str(sync_script), "check")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            packaged = MODULE_PATH.parents[1] / "skill" / "scripts" / "ralph.py"
+        else:
+            self.assertTrue(ralph.PACKAGE_LAYOUT)
+            packaged = MODULE_PATH
+            for source in ralph.runtime_sources("monorepo").values():
+                self.assertTrue(source.is_file(), source)
         help_result = run(sys.executable, str(packaged), "--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
         self.assertIn("upgrade", help_result.stdout)
