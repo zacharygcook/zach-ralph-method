@@ -99,7 +99,8 @@ The loop recognizes three scoped completion markers (checked in priority order):
 
 Sprint-level signal: `<promise>RALPH_SPRINT_COMPLETE</promise>`
 
-Signals that ALL chunks are complete and the sprint is finished. The loop skips state-delta validation for this marker.
+Signals that the agent believes all chunks are complete. The marker receives the same exact-transition,
+repository-native validation, and commit-evidence checks as chunk completion; it cannot bypass gates.
 
 ### RALPH_CHUNK_COMPLETE
 
@@ -111,13 +112,14 @@ The standard completion marker. Signals:
 - Work has been committed to git
 - Ready for next chunk
 
-**State-delta validation**: The loop verifies that the passed chunk count actually increased before accepting this signal. This prevents false positives from marker-only emissions without real state change.
+**Evidence gate**: The loop verifies that exactly the next sequential chunk changed, runs
+`RALPH_CHUNK_VALIDATION_COMMAND`, and requires a new chunk-owned commit before accepting this signal.
 
 ### RALPH_COMPLETE (Legacy)
 
 Legacy signal: `<promise>RALPH_COMPLETE</promise>`
 
-Still recognized for backward compatibility. Treated as chunk-level (`legacy_chunk` scope) with the same state-delta validation as `RALPH_CHUNK_COMPLETE`. New prompts should use `RALPH_CHUNK_COMPLETE` instead.
+Still recognized for backward compatibility. Treated as chunk-level (`legacy_chunk` scope) with the same evidence gate as `RALPH_CHUNK_COMPLETE`. New prompts should use `RALPH_CHUNK_COMPLETE` instead.
 
 ---
 

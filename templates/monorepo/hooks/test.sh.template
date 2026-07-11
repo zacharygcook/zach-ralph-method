@@ -8,23 +8,55 @@ RALPH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_ROOT="$(cd "$RALPH_DIR/.." && pwd)"
 source "$RALPH_DIR/config.env"
 source "$RALPH_DIR/lib/ralph-common.sh"
+MANIFEST="$SPRINT_DIR/manifest.json"
 
-if [[ "${RALPH_TESTS_ENABLED:-true}" != "true" ]]; then
-  echo "Test hook disabled explicitly by RALPH_TESTS_ENABLED=false"
+set_phase() {
+  local phase="$1" status="$2" reason="${3:-null}" now
+  now=$(now_iso)
+  manifest_update_locked "$MANIFEST" --arg phase "$phase" --arg status "$status" --arg reason "$reason" --arg now "$now" '
+    .hooks.validation.phases[$phase] = {
+      status: $status,
+      reason: (if $reason == "null" then null else $reason end),
+      completed_at: (if ($status == "done" or $status == "skipped" or $status == "failed") then $now else null end)
+    }
+  ' >/dev/null
+}
+
+SPRINT_VALIDATION_ENABLED="${RALPH_SPRINT_VALIDATION_ENABLED:-${RALPH_TESTS_ENABLED:-true}}"
+SPRINT_VALIDATION_COMMAND="${RALPH_SPRINT_VALIDATION_COMMAND:-${RALPH_TEST_COMMAND:-}}"
+
+if [[ "$SPRINT_VALIDATION_ENABLED" != "true" ]]; then
+  echo "Sprint validation disabled explicitly"
   exit 20
 fi
 
-if [[ -z "${RALPH_TEST_COMMAND:-}" ]]; then
-  echo "RALPH_TEST_COMMAND is required while the test hook is enabled"
+if [[ -z "$SPRINT_VALIDATION_COMMAND" ]]; then
+  echo "RALPH_SPRINT_VALIDATION_COMMAND is required while sprint validation is enabled"
   exit 12
 fi
 
 export RALPH_PROJECT_ROOT="$PROJECT_ROOT"
 export RALPH_SPRINT_DIR="$SPRINT_DIR"
-echo "Running configured test command: $RALPH_TEST_COMMAND"
-(cd "$PROJECT_ROOT" && bash -lc "$RALPH_TEST_COMMAND")
+echo "Running configured sprint validation: $SPRINT_VALIDATION_COMMAND"
+set_phase "sprint" "running"
+if (cd "$PROJECT_ROOT" && bash -lc "$SPRINT_VALIDATION_COMMAND"); then
+  set_phase "sprint" "done"
+else
+  exit_code=$?
+  set_phase "sprint" "failed" "exit_$exit_code"
+  exit "$exit_code"
+fi
 
 if [[ -n "${RALPH_E2E_COMMAND:-}" ]]; then
   echo "Running configured E2E command: $RALPH_E2E_COMMAND"
-  (cd "$PROJECT_ROOT" && bash -lc "$RALPH_E2E_COMMAND")
+  set_phase "e2e" "running"
+  if (cd "$PROJECT_ROOT" && bash -lc "$RALPH_E2E_COMMAND"); then
+    set_phase "e2e" "done"
+  else
+    exit_code=$?
+    set_phase "e2e" "failed" "exit_$exit_code"
+    exit "$exit_code"
+  fi
+else
+  set_phase "e2e" "skipped" "not_configured"
 fi

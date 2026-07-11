@@ -10,7 +10,8 @@
 6. Find the first chunk where `passes: false`
 7. Complete and verify that chunk's acceptance criteria
 8. Append decisions, discoveries, and remaining risks to `SCRATCHPAD.md`
-9. Set `passes: true`, commit only the files belonging to this chunk, then emit `<promise>RALPH_CHUNK_COMPLETE</promise>`
+9. Run the repository's fast validation command, set only this chunk's `passes` to `true`, commit only the files belonging to this chunk, then emit `<promise>RALPH_CHUNK_COMPLETE</promise>`
+10. Ralph will independently rerun `RALPH_CHUNK_VALIDATION_COMMAND`; your completion claim is only a candidate until that gate passes
 
 ## Reference Patterns
 
@@ -38,6 +39,7 @@ When current chunk's acceptance criteria are ALL verified:
 - Commit after completing the chunk, before the completion marker
 - Use a clean, descriptive message (no "Generated with Claude" or "Co-Authored-By")
 - Inspect `git status`, then stage only the paths belonging to this chunk; never sweep unrelated work into the commit
+- Never mark multiple chunks passed in one iteration
 
 If blocked and need human input:
 

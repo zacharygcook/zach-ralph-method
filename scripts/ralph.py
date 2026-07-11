@@ -80,13 +80,23 @@ def render_config(arguments: argparse.Namespace) -> str:
             "RALPH_UNATTENDED_APPROVED": "true"
             if arguments.approve_unattended
             else "false",
-            "RALPH_TEST_COMMAND": shell_value(arguments.test_command or ""),
+            "RALPH_CHUNK_VALIDATION_COMMAND": shell_value(
+                arguments.chunk_validation_command or ""
+            ),
+            "RALPH_SPRINT_VALIDATION_COMMAND": shell_value(
+                arguments.sprint_validation_command or arguments.test_command or ""
+            ),
             "RALPH_E2E_COMMAND": shell_value(arguments.e2e_command or ""),
             "RALPH_REVIEW_ENABLED": "false" if arguments.disable_review else "true",
             "RALPH_DOCUMENTATION_ENABLED": "false"
             if arguments.disable_documentation
             else "true",
-            "RALPH_TESTS_ENABLED": "false" if arguments.disable_tests else "true",
+            "RALPH_CHUNK_VALIDATION_ENABLED": "false"
+            if arguments.disable_chunk_validation
+            else "true",
+            "RALPH_SPRINT_VALIDATION_ENABLED": "false"
+            if arguments.disable_sprint_validation or arguments.disable_tests
+            else "true",
             "RALPH_MODE": arguments.mode,
         }
     )
@@ -145,6 +155,22 @@ def install(arguments: argparse.Namespace) -> Path:
         raise RalphError(
             f"Refusing to overwrite existing runtime: {target}; use --update-runtime"
         )
+    if not target.exists():
+        if (
+            not arguments.disable_chunk_validation
+            and not arguments.chunk_validation_command
+        ):
+            raise RalphError(
+                "New runtimes require --chunk-validation-command unless --disable-chunk-validation is explicit"
+            )
+        if (
+            not arguments.disable_sprint_validation
+            and not arguments.disable_tests
+            and not (arguments.sprint_validation_command or arguments.test_command)
+        ):
+            raise RalphError(
+                "New runtimes require --sprint-validation-command unless --disable-sprint-validation is explicit"
+            )
 
     previous: dict[str, Any] = {}
     if metadata_path.exists():
@@ -428,14 +454,29 @@ def validate(repo: Path) -> dict[str, Any]:
                 "detail": "runtime is safely disarmed",
             }
         )
-    if config.get("RALPH_TESTS_ENABLED", "true") == "true" and not config.get(
-        "RALPH_TEST_COMMAND"
+    if config.get("RALPH_CHUNK_VALIDATION_ENABLED", "true") == "true" and not config.get(
+        "RALPH_CHUNK_VALIDATION_COMMAND"
     ):
         findings.append(
             {
                 "status": "fail",
-                "check": "tests",
-                "detail": "enabled but RALPH_TEST_COMMAND is empty",
+                "check": "chunk-validation",
+                "detail": "enabled but RALPH_CHUNK_VALIDATION_COMMAND is empty",
+            }
+        )
+    sprint_command = config.get("RALPH_SPRINT_VALIDATION_COMMAND") or config.get(
+        "RALPH_TEST_COMMAND"
+    )
+    sprint_enabled = config.get(
+        "RALPH_SPRINT_VALIDATION_ENABLED",
+        config.get("RALPH_TESTS_ENABLED", "true"),
+    )
+    if sprint_enabled == "true" and not sprint_command:
+        findings.append(
+            {
+                "status": "fail",
+                "check": "sprint-validation",
+                "detail": "enabled but RALPH_SPRINT_VALIDATION_COMMAND is empty",
             }
         )
     sprints = root / "sprints"
@@ -504,12 +545,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--agent-command",
         help="Trusted custom shell command; receives RALPH_PROMPT_FILE and RALPH_PROJECT_ROOT.",
     )
-    init_parser.add_argument("--test-command")
+    init_parser.add_argument("--chunk-validation-command")
+    init_parser.add_argument("--sprint-validation-command")
+    init_parser.add_argument(
+        "--test-command",
+        help="Deprecated alias for --sprint-validation-command.",
+    )
     init_parser.add_argument("--e2e-command")
     init_parser.add_argument("--approve-unattended", action="store_true")
     init_parser.add_argument("--disable-review", action="store_true")
     init_parser.add_argument("--disable-documentation", action="store_true")
     init_parser.add_argument("--disable-tests", action="store_true")
+    init_parser.add_argument("--disable-chunk-validation", action="store_true")
+    init_parser.add_argument("--disable-sprint-validation", action="store_true")
     init_parser.add_argument("--update-runtime", action="store_true")
     validate_parser = subparsers.add_parser(
         "validate", help="Validate runtime, configuration, and sprints."

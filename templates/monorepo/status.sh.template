@@ -36,9 +36,14 @@ if [[ -f "$MANIFEST" ]]; then
   echo "Hooks:"
   jq -r '.hooks | to_entries[] | "  - \(.key): \(.value.status // "pending") reason=\(.value.reason // "none")"' "$MANIFEST"
 
-  if jq -e '.hooks.tests.phases' "$MANIFEST" >/dev/null 2>&1; then
-    echo "Test phases:"
-    jq -r '.hooks.tests.phases | to_entries[] | "  - \(.key): \(.value.status // "pending") reason=\(.value.reason // "none")"' "$MANIFEST"
+  if jq -e '.hooks.validation.phases' "$MANIFEST" >/dev/null 2>&1; then
+    echo "Final validation phases:"
+    jq -r '.hooks.validation.phases | to_entries[] | "  - \(.key): \(.value.status // "pending") reason=\(.value.reason // "none")"' "$MANIFEST"
+  fi
+
+  if jq -e '.validation.chunk_attempts | length > 0' "$MANIFEST" >/dev/null 2>&1; then
+    echo "Recent chunk validations:"
+    jq -r '.validation.chunk_attempts[-5:][] | "  - chunk \(.chunk_id) iteration \(.iteration): \(.status) exit=\(.exit_code) log=\(.log)"' "$MANIFEST"
   fi
 else
   echo "Manifest: (missing)"
@@ -68,7 +73,7 @@ else
   echo "Latest run: (none)"
 fi
 
-for hook in review documentation tests; do
+for hook in review documentation validation; do
   state_file="$SPRINT_DIR/.hook-${hook}.state.json"
   if [[ ! -f "$state_file" ]] && [[ -n "${LATEST_RUN:-}" ]]; then
     state_file="$LATEST_RUN/hook-runtime/.hook-${hook}.state.json"

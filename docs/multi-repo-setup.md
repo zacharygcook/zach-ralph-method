@@ -17,7 +17,7 @@ Repository names are configuration, not conventions. The parent directory does n
 ## Install
 
 ```bash
-python3 scripts/ralph.py init --repo /path/to/product --mode multi-repo --repos service dashboard mobile --primary-repo service --agent codex --test-command "your validation command"
+python3 scripts/ralph.py init --repo /path/to/product --mode multi-repo --repos service dashboard mobile --primary-repo service --agent codex --chunk-validation-command "your fast validation command" --sprint-validation-command "your full validation command"
 ```
 
 The installer verifies every named child contains `.git`, records the topology in `.runtime-manifest.json`, and writes `RALPH_REPOS` plus `RALPH_PRIMARY_REPO` to `config.env`.
@@ -59,7 +59,11 @@ The manifest records `start_commit` and `end_commit` separately per repository. 
 
 ## Project commands
 
-The runtime does not guess languages, package managers, services, or test frameworks. Configure `RALPH_TEST_COMMAND`, optional `RALPH_E2E_COMMAND`, and hook agents in `.ralph/config.env`. Commands run from the shared parent so they can coordinate services when necessary.
+The runtime does not guess languages, package managers, services, or test frameworks. Configure
+`RALPH_CHUNK_VALIDATION_COMMAND`, `RALPH_SPRINT_VALIDATION_COMMAND`, optional `RALPH_E2E_COMMAND`,
+and hook agents in `.ralph/config.env`. Commands run from the shared parent so they can coordinate
+services when necessary. A named-repository chunk requires a new commit there; `all`/`both` chunks
+require commit evidence from every configured child repository.
 
 ## Validate and operate
 

@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -130,7 +131,9 @@ class RalphRuntimeTest(unittest.TestCase):
                 str(repo),
                 "--agent",
                 "codex",
-                "--test-command",
+                "--chunk-validation-command",
+                "true",
+                "--sprint-validation-command",
                 "true",
             )
             second = run_cli(
@@ -139,7 +142,9 @@ class RalphRuntimeTest(unittest.TestCase):
                 str(repo),
                 "--agent",
                 "codex",
-                "--test-command",
+                "--chunk-validation-command",
+                "true",
+                "--sprint-validation-command",
                 "true",
             )
             self.assertEqual(first.returncode, 0, first.stderr)
@@ -148,14 +153,15 @@ class RalphRuntimeTest(unittest.TestCase):
             config = ralph.parse_config(repo / ".ralph" / "config.env")
             self.assertEqual(config["RALPH_UNATTENDED_APPROVED"], "false")
             self.assertEqual(config["RALPH_AUTO_COMMIT"], "false")
-            self.assertEqual(config["RALPH_TEST_COMMAND"], "true")
+            self.assertEqual(config["RALPH_CHUNK_VALIDATION_COMMAND"], "true")
+            self.assertEqual(config["RALPH_SPRINT_VALIDATION_COMMAND"], "true")
 
     def test_update_runtime_preserves_config_and_sprints(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory) / "repo"
             initialize_repo(repo)
             self.assertEqual(
-                run_cli("init", "--repo", str(repo), "--disable-tests").returncode,
+                run_cli("init", "--repo", str(repo), "--disable-chunk-validation", "--disable-tests").returncode,
                 0,
             )
             sprint = create_sprint(repo)
@@ -180,7 +186,7 @@ class RalphRuntimeTest(unittest.TestCase):
             result = run_cli(
                 "init", "--repo", str(root), "--mode", "multi-repo",
                 "--repos", "api", "web", "--agent", "custom",
-                "--agent-command", "true", "--disable-tests",
+                "--agent-command", "true", "--chunk-validation-command", "true", "--disable-tests",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             create_sprint(root, repo="api")
@@ -199,12 +205,17 @@ class RalphRuntimeTest(unittest.TestCase):
             initialize_repo(root / "dashboard")
             fake_agent = root / "fake_agent.py"
             fake_agent.write_text(
-                "import json, os, pathlib\n"
+                "import json, os, pathlib, subprocess\n"
                 "prompt = pathlib.Path(os.environ['RALPH_PROMPT_FILE'])\n"
                 "chunks = prompt.parent / 'chunks.json'\n"
                 "data = json.loads(chunks.read_text())\n"
                 "data['chunks'][0]['passes'] = True\n"
                 "chunks.write_text(json.dumps(data, indent=2) + '\\n')\n"
+                "repo = pathlib.Path(os.environ['RALPH_PROJECT_ROOT']) / 'service'\n"
+                "readme = repo / 'README.md'\n"
+                "readme.write_text(readme.read_text() + 'chunk complete\\n')\n"
+                "subprocess.run(['git', 'add', 'README.md'], cwd=repo, check=True)\n"
+                "subprocess.run(['git', 'commit', '-m', 'Complete fixture chunk'], cwd=repo, check=True, capture_output=True)\n"
                 "print('RALPH_CHUNK_COMPLETE')\n",
                 encoding="utf-8",
             )
@@ -214,10 +225,12 @@ class RalphRuntimeTest(unittest.TestCase):
                 "--repos", "service", "dashboard", "--agent", "custom",
                 "--agent-command", command, "--approve-unattended",
                 "--disable-review", "--disable-documentation", "--disable-tests",
+                "--chunk-validation-command", "true",
             )
             self.assertEqual(initialized.returncode, 0, initialized.stderr)
             sprint = create_sprint(root, repo="service")
             replace_config(root / ".ralph" / "config.env", "CURRENT_SPRINT", "1-demo")
+            replace_config(root / ".ralph" / "config.env", "MAX_ITERATIONS", "2")
             loop = run(str(root / ".ralph" / "loop.sh"), cwd=root)
             self.assertEqual(loop.returncode, 0, f"{loop.stdout}\n{loop.stderr}")
             manifest = json.loads((sprint / "manifest.json").read_text())
@@ -233,7 +246,7 @@ class RalphRuntimeTest(unittest.TestCase):
             repo = root / "repo"
             initialize_repo(repo)
             self.assertEqual(
-                run_cli("init", "--repo", str(repo), "--disable-tests").returncode, 0
+                run_cli("init", "--repo", str(repo), "--disable-chunk-validation", "--disable-tests").returncode, 0
             )
             loop = repo / ".ralph" / "loop.sh"
             loop.write_text("keep this local drift\n", encoding="utf-8")
@@ -254,8 +267,17 @@ class RalphRuntimeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory) / "repo"
             initialize_repo(repo)
-            self.assertEqual(run_cli("init", "--repo", str(repo)).returncode, 0)
+            self.assertEqual(
+                run_cli(
+                    "init", "--repo", str(repo),
+                    "--disable-chunk-validation", "--disable-sprint-validation",
+                ).returncode,
+                0,
+            )
             sprint = create_sprint(repo)
+            config = repo / ".ralph" / "config.env"
+            replace_config(config, "RALPH_CHUNK_VALIDATION_ENABLED", "true")
+            replace_config(config, "RALPH_SPRINT_VALIDATION_ENABLED", "true")
             (sprint / "SCRATCHPAD.md").unlink()
             with (repo / ".ralph" / "status.sh").open("a", encoding="utf-8") as handle:
                 handle.write("# drift\n")
@@ -266,7 +288,8 @@ class RalphRuntimeTest(unittest.TestCase):
             checks = {
                 item["check"] for item in report["findings"] if item["status"] == "fail"
             }
-            self.assertIn("enabled but RALPH_TEST_COMMAND is empty", details)
+            self.assertIn("enabled but RALPH_CHUNK_VALIDATION_COMMAND is empty", details)
+            self.assertIn("enabled but RALPH_SPRINT_VALIDATION_COMMAND is empty", details)
             self.assertIn("sprint:1-demo:SCRATCHPAD.md", checks)
             self.assertIn("runtime:fingerprint", checks)
 
@@ -276,12 +299,17 @@ class RalphRuntimeTest(unittest.TestCase):
             initialize_repo(repo)
             fake_agent = repo / "fake_agent.py"
             fake_agent.write_text(
-                "import json, os, pathlib\n"
+                "import json, os, pathlib, subprocess\n"
                 "prompt = pathlib.Path(os.environ['RALPH_PROMPT_FILE'])\n"
                 "chunks = prompt.parent / 'chunks.json'\n"
                 "data = json.loads(chunks.read_text())\n"
                 "data['chunks'][0]['passes'] = True\n"
                 "chunks.write_text(json.dumps(data, indent=2) + '\\n')\n"
+                "root = pathlib.Path(os.environ['RALPH_PROJECT_ROOT'])\n"
+                "readme = root / 'README.md'\n"
+                "readme.write_text(readme.read_text() + 'chunk complete\\n')\n"
+                "subprocess.run(['git', 'add', 'README.md', str(chunks.relative_to(root))], cwd=root, check=True)\n"
+                "subprocess.run(['git', 'commit', '-m', 'Complete fixture chunk'], cwd=root, check=True, capture_output=True)\n"
                 "print('RALPH_CHUNK_COMPLETE')\n",
                 encoding="utf-8",
             )
@@ -298,11 +326,14 @@ class RalphRuntimeTest(unittest.TestCase):
                 "--disable-review",
                 "--disable-documentation",
                 "--disable-tests",
+                "--chunk-validation-command",
+                "true",
             )
             self.assertEqual(initialized.returncode, 0, initialized.stderr)
             sprint = create_sprint(repo)
             config = repo / ".ralph" / "config.env"
             replace_config(config, "CURRENT_SPRINT", "1-demo")
+            replace_config(config, "MAX_ITERATIONS", "2")
             validated = run_cli("validate", "--repo", str(repo), "--json")
             self.assertEqual(validated.returncode, 0, validated.stdout)
             loop = run(str(repo / ".ralph" / "loop.sh"), cwd=repo)
@@ -314,7 +345,7 @@ class RalphRuntimeTest(unittest.TestCase):
             self.assertTrue(
                 json.loads((sprint / "chunks.json").read_text())["chunks"][0]["passes"]
             )
-            for hook in ("review", "documentation", "tests"):
+            for hook in ("review", "documentation", "validation"):
                 self.assertEqual(manifest["hooks"][hook]["status"], "skipped")
                 self.assertTrue((sprint / f".hook-{hook}.done").is_file())
             status = run_cli("status", "--repo", str(repo))
@@ -322,12 +353,198 @@ class RalphRuntimeTest(unittest.TestCase):
             self.assertIn("Manifest phase: hooks_done", status.stdout)
             self.assertFalse(run("git", "status", "--porcelain", cwd=repo).stdout == "")
 
+    def test_failed_chunk_validation_resets_and_repairs_next_iteration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            validator = repo / "validate.sh"
+            validator.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ ! -f .validation-seen ]]; then touch .validation-seen; exit 1; fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            validator.chmod(0o755)
+            fake_agent = repo / "fake_agent.py"
+            fake_agent.write_text(
+                "import json, os, pathlib, subprocess\n"
+                "root = pathlib.Path(os.environ['RALPH_PROJECT_ROOT'])\n"
+                "prompt = pathlib.Path(os.environ['RALPH_PROMPT_FILE'])\n"
+                "chunks = prompt.parent / 'chunks.json'\n"
+                "data = json.loads(chunks.read_text())\n"
+                "data['chunks'][0]['passes'] = True\n"
+                "chunks.write_text(json.dumps(data, indent=2) + '\\n')\n"
+                "readme = root / 'README.md'\n"
+                "readme.write_text(readme.read_text() + 'attempt\\n')\n"
+                "subprocess.run(['git', 'add', 'README.md', str(chunks.relative_to(root))], cwd=root, check=True)\n"
+                "subprocess.run(['git', 'commit', '-m', 'Attempt fixture chunk'], cwd=root, check=True, capture_output=True)\n"
+                "print('RALPH_CHUNK_COMPLETE')\n",
+                encoding="utf-8",
+            )
+            command = f"{shlex.quote(sys.executable)} {shlex.quote(str(fake_agent))}"
+            initialized = run_cli(
+                "init", "--repo", str(repo), "--agent", "custom",
+                "--agent-command", command, "--approve-unattended",
+                "--chunk-validation-command", "./validate.sh",
+                "--disable-review", "--disable-documentation", "--disable-sprint-validation",
+            )
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            sprint = create_sprint(repo)
+            config = repo / ".ralph" / "config.env"
+            replace_config(config, "CURRENT_SPRINT", "1-demo")
+            replace_config(config, "MAX_ITERATIONS", "3")
+            loop = run(str(repo / ".ralph" / "loop.sh"), cwd=repo)
+            self.assertEqual(loop.returncode, 0, f"{loop.stdout}\n{loop.stderr}")
+            manifest = json.loads((sprint / "manifest.json").read_text())
+            attempts = manifest["validation"]["chunk_attempts"]
+            self.assertEqual([item["status"] for item in attempts], ["failed", "passed"])
+            self.assertIn("configured chunk validation failed", (sprint / "SCRATCHPAD.md").read_text())
+            self.assertTrue(json.loads((sprint / "chunks.json").read_text())["chunks"][0]["passes"])
+
+    def test_multiple_chunk_transition_is_rejected_without_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            fake_agent = repo / "fake_agent.py"
+            fake_agent.write_text(
+                "import json, os, pathlib, subprocess\n"
+                "root = pathlib.Path(os.environ['RALPH_PROJECT_ROOT'])\n"
+                "prompt = pathlib.Path(os.environ['RALPH_PROMPT_FILE'])\n"
+                "chunks = prompt.parent / 'chunks.json'\n"
+                "data = json.loads(chunks.read_text())\n"
+                "data['chunks'][0]['passes'] = data['chunks'][1]['passes'] = True\n"
+                "chunks.write_text(json.dumps(data, indent=2) + '\\n')\n"
+                "subprocess.run(['git', 'add', str(chunks.relative_to(root))], cwd=root, check=True)\n"
+                "subprocess.run(['git', 'commit', '-m', 'Claim two chunks'], cwd=root, check=True, capture_output=True)\n"
+                "print('RALPH_CHUNK_COMPLETE')\n",
+                encoding="utf-8",
+            )
+            command = f"{shlex.quote(sys.executable)} {shlex.quote(str(fake_agent))}"
+            initialized = run_cli(
+                "init", "--repo", str(repo), "--agent", "custom", "--agent-command", command,
+                "--approve-unattended", "--chunk-validation-command", "true",
+                "--disable-review", "--disable-documentation", "--disable-sprint-validation",
+            )
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            sprint = create_sprint(repo)
+            chunks_path = sprint / "chunks.json"
+            payload = json.loads(chunks_path.read_text())
+            payload["chunks"].append({
+                "id": 2, "title": "Second", "passes": False,
+                "acceptance_criteria": ["Second completes"], "artifacts": ["README.md"],
+            })
+            chunks_path.write_text(json.dumps(payload, indent=2) + "\n")
+            config = repo / ".ralph" / "config.env"
+            replace_config(config, "CURRENT_SPRINT", "1-demo")
+            replace_config(config, "MAX_ITERATIONS", "1")
+            loop = run(str(repo / ".ralph" / "loop.sh"), cwd=repo)
+            self.assertEqual(loop.returncode, 2, loop.stdout)
+            chunks = json.loads(chunks_path.read_text())["chunks"]
+            self.assertEqual([chunk["passes"] for chunk in chunks], [False, False])
+            manifest = json.loads((sprint / "manifest.json").read_text())
+            self.assertEqual(manifest["validation"]["chunk_attempts"], [])
+
+    def test_failed_sprint_validation_is_resumable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            sprint_validator = repo / "sprint_validate.sh"
+            sprint_validator.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            sprint_validator.chmod(0o755)
+            fake_agent = repo / "fake_agent.py"
+            fake_agent.write_text(
+                "import json, os, pathlib, subprocess\n"
+                "root = pathlib.Path(os.environ['RALPH_PROJECT_ROOT'])\n"
+                "prompt = pathlib.Path(os.environ['RALPH_PROMPT_FILE'])\n"
+                "chunks = prompt.parent / 'chunks.json'\n"
+                "data = json.loads(chunks.read_text())\n"
+                "data['chunks'][0]['passes'] = True\n"
+                "chunks.write_text(json.dumps(data, indent=2) + '\\n')\n"
+                "readme = root / 'README.md'\n"
+                "readme.write_text(readme.read_text() + 'complete\\n')\n"
+                "subprocess.run(['git', 'add', 'README.md', str(chunks.relative_to(root))], cwd=root, check=True)\n"
+                "subprocess.run(['git', 'commit', '-m', 'Complete chunk'], cwd=root, check=True, capture_output=True)\n"
+                "print('RALPH_CHUNK_COMPLETE')\n",
+                encoding="utf-8",
+            )
+            command = f"{shlex.quote(sys.executable)} {shlex.quote(str(fake_agent))}"
+            initialized = run_cli(
+                "init", "--repo", str(repo), "--agent", "custom", "--agent-command", command,
+                "--approve-unattended", "--chunk-validation-command", "true",
+                "--sprint-validation-command", "./sprint_validate.sh",
+                "--disable-review", "--disable-documentation",
+            )
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            sprint = create_sprint(repo)
+            config = repo / ".ralph" / "config.env"
+            replace_config(config, "CURRENT_SPRINT", "1-demo")
+            first = run(str(repo / ".ralph" / "loop.sh"), cwd=repo)
+            self.assertEqual(first.returncode, 14, first.stdout)
+            manifest = json.loads((sprint / "manifest.json").read_text())
+            self.assertEqual(manifest["phase"], "chunks_done")
+            self.assertEqual(manifest["hooks"]["validation"]["status"], "failed")
+
+            sprint_validator.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            second = run(str(repo / ".ralph" / "loop.sh"), cwd=repo)
+            self.assertEqual(second.returncode, 0, second.stdout)
+            manifest = json.loads((sprint / "manifest.json").read_text())
+            self.assertEqual(manifest["phase"], "hooks_done")
+            self.assertEqual(manifest["hooks"]["validation"]["status"], "done")
+
+    def test_interrupted_chunk_validation_resets_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            fake_agent = repo / "fake_agent.py"
+            fake_agent.write_text(
+                "import json, os, pathlib, subprocess\n"
+                "root = pathlib.Path(os.environ['RALPH_PROJECT_ROOT'])\n"
+                "prompt = pathlib.Path(os.environ['RALPH_PROMPT_FILE'])\n"
+                "chunks = prompt.parent / 'chunks.json'\n"
+                "data = json.loads(chunks.read_text())\n"
+                "data['chunks'][0]['passes'] = True\n"
+                "chunks.write_text(json.dumps(data, indent=2) + '\\n')\n"
+                "readme = root / 'README.md'\n"
+                "readme.write_text(readme.read_text() + 'candidate\\n')\n"
+                "subprocess.run(['git', 'add', 'README.md', str(chunks.relative_to(root))], cwd=root, check=True)\n"
+                "subprocess.run(['git', 'commit', '-m', 'Create candidate'], cwd=root, check=True, capture_output=True)\n"
+                "print('RALPH_CHUNK_COMPLETE')\n",
+                encoding="utf-8",
+            )
+            command = f"{shlex.quote(sys.executable)} {shlex.quote(str(fake_agent))}"
+            initialized = run_cli(
+                "init", "--repo", str(repo), "--agent", "custom", "--agent-command", command,
+                "--approve-unattended", "--chunk-validation-command", "sleep 30",
+                "--disable-review", "--disable-documentation", "--disable-sprint-validation",
+            )
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            sprint = create_sprint(repo)
+            replace_config(repo / ".ralph" / "config.env", "CURRENT_SPRINT", "1-demo")
+            process = subprocess.Popen(
+                [str(repo / ".ralph" / "loop.sh")], cwd=repo,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            )
+            validation_logs: list[Path] = []
+            for _attempt in range(100):
+                validation_logs = list((repo / ".ralph" / "logs").glob("**/chunk-1-validation-1.log"))
+                if validation_logs:
+                    break
+                time.sleep(0.1)
+            self.assertTrue(validation_logs, "validation did not start")
+            process.terminate()
+            output, _ = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 143, output)
+            self.assertFalse(json.loads((sprint / "chunks.json").read_text())["chunks"][0]["passes"])
+            manifest = json.loads((sprint / "manifest.json").read_text())
+            self.assertEqual(manifest["validation"]["chunk_attempts"][-1]["status"], "interrupted")
+
     def test_loop_refuses_without_explicit_unattended_approval(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory) / "repo"
             initialize_repo(repo)
             self.assertEqual(
-                run_cli("init", "--repo", str(repo), "--disable-tests").returncode, 0
+                run_cli("init", "--repo", str(repo), "--disable-chunk-validation", "--disable-tests").returncode, 0
             )
             create_sprint(repo)
             replace_config(repo / ".ralph" / "config.env", "CURRENT_SPRINT", "1-demo")

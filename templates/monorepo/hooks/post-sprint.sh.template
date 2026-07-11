@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Post-Sprint Hook Orchestrator
-# Runs all post-sprint automation: review, docs, tests
+# Runs all post-sprint automation: review, docs, final validation
 
 set -euo pipefail
 
@@ -35,8 +35,8 @@ FINAL_REVIEW_STATUS="pending"
 FINAL_REVIEW_REASON="null"
 FINAL_DOCUMENTATION_STATUS="pending"
 FINAL_DOCUMENTATION_REASON="null"
-FINAL_TESTS_STATUS="pending"
-FINAL_TESTS_REASON="null"
+FINAL_VALIDATION_STATUS="pending"
+FINAL_VALIDATION_REASON="null"
 
 log_event() {
   append_event "$EVENT_LOG" "$1" "$2" "$3"
@@ -97,7 +97,7 @@ record_hook_result() {
   case "$hook_key" in
     review) FINAL_REVIEW_STATUS="$status"; FINAL_REVIEW_REASON="$reason" ;;
     documentation) FINAL_DOCUMENTATION_STATUS="$status"; FINAL_DOCUMENTATION_REASON="$reason" ;;
-    tests) FINAL_TESTS_STATUS="$status"; FINAL_TESTS_REASON="$reason" ;;
+    validation) FINAL_VALIDATION_STATUS="$status"; FINAL_VALIDATION_REASON="$reason" ;;
     *) return "$EXIT_VALIDATION" ;;
   esac
 }
@@ -105,7 +105,7 @@ record_hook_result() {
 persist_hook_results() {
   update_manifest_hook "review" "$FINAL_REVIEW_STATUS" "$FINAL_REVIEW_REASON"
   update_manifest_hook "documentation" "$FINAL_DOCUMENTATION_STATUS" "$FINAL_DOCUMENTATION_REASON"
-  update_manifest_hook "tests" "$FINAL_TESTS_STATUS" "$FINAL_TESTS_REASON"
+  update_manifest_hook "validation" "$FINAL_VALIDATION_STATUS" "$FINAL_VALIDATION_REASON"
 }
 
 read_hook_pid_from_state() {
@@ -273,7 +273,7 @@ fi
 HOOK_FAILURES=0
 run_hook "1/3" "code review" "review" "$SCRIPT_DIR/review.sh" "$HOOK_RUNTIME_DIR/review.hook.log" || HOOK_FAILURES=$((HOOK_FAILURES + 1))
 run_hook "2/3" "documentation generation" "documentation" "$SCRIPT_DIR/document.sh" "$HOOK_RUNTIME_DIR/document.hook.log" || HOOK_FAILURES=$((HOOK_FAILURES + 1))
-run_hook "3/3" "test suite creation" "tests" "$SCRIPT_DIR/test.sh" "$HOOK_RUNTIME_DIR/test.hook.log" || HOOK_FAILURES=$((HOOK_FAILURES + 1))
+run_hook "3/3" "sprint validation" "validation" "$SCRIPT_DIR/test.sh" "$HOOK_RUNTIME_DIR/validation.hook.log" || HOOK_FAILURES=$((HOOK_FAILURES + 1))
 
 echo "========================================"
 echo "Post-sprint hooks complete!"

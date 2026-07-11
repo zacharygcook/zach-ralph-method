@@ -142,13 +142,15 @@ Uses `tee` for **real-time streaming** and **auto-continues** through all chunks
 
 **Git commit sequence**:
 1. Complete acceptance criteria
-2. `git add -A && git commit -m "Descriptive message"`
+2. Inspect status, stage only chunk-owned paths, and create a descriptive commit
 3. Update chunks.json: `passes: true`
 4. Output: `<promise>RALPH_CHUNK_COMPLETE</promise>`
 
 **Scoped markers**: Use `RALPH_CHUNK_COMPLETE` for individual chunks, `RALPH_SPRINT_COMPLETE` when all chunks are done. Legacy `RALPH_COMPLETE` is still recognized as chunk-level.
 
-**State-delta validation**: The loop verifies chunk pass count increased before accepting a marker-based completion signal.
+**Evidence-gated completion**: The loop accepts exactly one next sequential chunk, reruns the configured
+fast validation, and requires commit evidence before recording completion. Failures reset that claim
+and leave a durable repair handoff.
 
 ## Directory Structure
 

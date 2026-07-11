@@ -1,5 +1,15 @@
 # Migration Report: Blackbird Hardening → Canonical Templates
 
+## v0.5.0 — Evidence-gated completion
+
+- Adds required `RALPH_CHUNK_VALIDATION_COMMAND` and final `RALPH_SPRINT_VALIDATION_COMMAND` gates.
+- Accepts only one next sequential chunk transition per iteration and rejects/resets invalid claims.
+- Requires commit evidence from the chunk-owned repository, or every repository for `all`/`both`.
+- Records validation attempts, exit codes, timestamps, and logs; failures feed the next context through `SCRATCHPAD.md`.
+- Replaces fictional test-generation phases with an honest final `validation` hook while migrating old `hooks.tests` state.
+- Keeps `RALPH_TEST_COMMAND` as a deprecated sprint-validation fallback; it never silently becomes a per-chunk gate.
+- Makes failed final validation return nonzero while preserving resumable `chunks_done` state.
+
 **Date**: 2026-02-12
 **Source**: `blackbird/.ralph/` (production-hardened loop)
 **Target**: `zach-ralph-method/templates/` (canonical templates)

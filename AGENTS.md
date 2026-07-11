@@ -12,7 +12,7 @@ This repository packages a hardened autonomous coding loop for one Git repositor
 
 ## Validation
 
-Run `python3 -m unittest discover -s tests -v`. The suite installs the runtime into disposable Git repositories and exercises safety gates, drift detection, status, hooks, and both repository modes.
+Run `python3 -m unittest discover -s tests -v`. The suite installs the runtime into disposable Git repositories and exercises safety gates, validation rejection and repair, commit evidence, drift detection, resumable hooks, and both repository modes.
 
 Run `python3 scripts/ralph.py --help` to inspect the public CLI. Shell templates must pass `bash -n` and remain portable across current macOS and Linux Bash environments.
 
@@ -22,6 +22,7 @@ Run `python3 scripts/ralph.py --help` to inspect the public CLI. Shell templates
 - `.ralph/.runtime-manifest.json` fingerprints managed runtime files and records the installation mode.
 - Every sprint reads and updates `SCRATCHPAD.md` so fresh agent contexts inherit durable state.
 - Completion signals are accepted only when chunk state actually advances.
+- Exactly one next sequential chunk may advance, and repository-native validation plus commit evidence must pass before acceptance.
 - Disabled hooks are explicit successful skips; failed or interrupted hooks remain resumable.
 - Multi-repo manifests record start and end commits separately for every configured child repository.
 

@@ -21,6 +21,15 @@ AGENT_IDLE_TIMEOUT_SEC="${AGENT_IDLE_TIMEOUT_SEC:-0}"
 POST_RESULT_IDLE_SEC="${POST_RESULT_IDLE_SEC:-45}"
 RALPH_INTERACTIVE="${RALPH_INTERACTIVE:-false}"
 RALPH_INTERACTIVE_TIMEOUT_SEC="${RALPH_INTERACTIVE_TIMEOUT_SEC:-20}"
+CHUNK_VALIDATION_ENABLED="${RALPH_CHUNK_VALIDATION_ENABLED:-true}"
+CHUNK_VALIDATION_COMMAND="${RALPH_CHUNK_VALIDATION_COMMAND:-}"
+VALIDATION_HEARTBEAT_SEC="${VALIDATION_HEARTBEAT_SEC:-15}"
+VALIDATION_IDLE_TIMEOUT_SEC="${VALIDATION_IDLE_TIMEOUT_SEC:-0}"
+ACTIVE_VALIDATION_CHUNK=""
+ACTIVE_VALIDATION_ITERATION=""
+ACTIVE_VALIDATION_LOG=""
+ACTIVE_VALIDATION_PID=""
+ACTIVE_VALIDATION_STARTED=""
 
 missing=$(require_commands bash git jq python3 || true)
 if [[ -n "$missing" ]]; then
@@ -30,6 +39,10 @@ fi
 if [[ "${RALPH_UNATTENDED_APPROVED:-false}" != "true" ]]; then
   echo "Refusing autonomous execution until RALPH_UNATTENDED_APPROVED=true in .ralph/config.env"
   exit 14
+fi
+if [[ "$CHUNK_VALIDATION_ENABLED" == "true" && -z "$CHUNK_VALIDATION_COMMAND" ]]; then
+  echo "RALPH_CHUNK_VALIDATION_COMMAND is required while chunk validation is enabled"
+  exit 12
 fi
 
 # ── CLI Flags ──────────────────────────────────────────────
@@ -169,20 +182,12 @@ if [[ ! -f "$MANIFEST_FILE" ]] || ! jq -e '.repos' "$MANIFEST_FILE" >/dev/null 2
   "iterations": 0,
   "repos": $REPOS_JSON,
   "commits": [],
+  "validation": {"chunk_attempts": []},
   "phase": "running",
   "hooks": {
     "review": {"status": "pending", "completed_at": null, "reason": null},
     "documentation": {"status": "pending", "completed_at": null, "reason": null},
-    "tests": {
-      "status": "pending",
-      "completed_at": null,
-      "reason": null,
-      "phases": {
-        "generate_tests": {"status": "pending", "completed_at": null, "reason": null},
-        "verify_tests": {"status": "pending", "completed_at": null, "reason": null},
-        "run_e2e": {"status": "pending", "completed_at": null, "reason": null}
-      }
-    }
+    "validation": {"status": "pending", "completed_at": null, "reason": null, "phases": {"sprint": {"status":"pending"}, "e2e": {"status":"pending"}}}
   }
 }
 EOF_MANIFEST
@@ -195,12 +200,12 @@ ensure_manifest_schema() {
     | .hooks = (.hooks // {})
     | .hooks.review = (.hooks.review // {"status":"pending","completed_at":null,"reason":null})
     | .hooks.documentation = (.hooks.documentation // {"status":"pending","completed_at":null,"reason":null})
-    | .hooks.tests = (.hooks.tests // {"status":"pending","completed_at":null,"reason":null,"phases":{}})
-    | .hooks.tests.phases = (.hooks.tests.phases // {})
-    | .hooks.tests.phases.generate_tests = (.hooks.tests.phases.generate_tests // {"status":"pending","completed_at":null,"reason":null})
-    | .hooks.tests.phases.verify_tests = (.hooks.tests.phases.verify_tests // .hooks.tests.phases.verify_backend_tests // {"status":"pending","completed_at":null,"reason":null})
-    | del(.hooks.tests.phases.verify_backend_tests)
-    | .hooks.tests.phases.run_e2e = (.hooks.tests.phases.run_e2e // {"status":"pending","completed_at":null,"reason":null})
+    | .validation = (.validation // {"chunk_attempts":[]})
+    | .validation.chunk_attempts = (.validation.chunk_attempts // [])
+    | .hooks.validation = (.hooks.validation // .hooks.tests // {"status":"pending","completed_at":null,"reason":null})
+    | .hooks.validation.reason = (.hooks.validation.reason // null)
+    | .hooks.validation.phases = (.hooks.validation.phases // {"sprint":{"status":"pending"},"e2e":{"status":"pending"}})
+    | del(.hooks.tests)
   ' || {
     log_orchestrator "ERROR: Failed to normalize manifest schema"
     return 1
@@ -221,6 +226,101 @@ all_chunks_pass_fn() {
 
 passed_chunk_count() {
   count_passed_chunks "$CHUNKS_FILE"
+}
+
+passed_chunk_ids() {
+  jq -c '[.chunks[] | select(.passes == true) | .id]' "$CHUNKS_FILE"
+}
+
+next_incomplete_chunk_id() {
+  jq -r '[.chunks[] | select(.passes != true)][0].id // empty' "$CHUNKS_FILE"
+}
+
+reset_chunk_pass() {
+  local chunk_id tmp
+  chunk_id="$1"
+  tmp="${CHUNKS_FILE}.tmp"
+  jq --argjson id "$chunk_id" '(.chunks[] | select(.id == $id) | .passes) = false' "$CHUNKS_FILE" > "$tmp"
+  mv "$tmp" "$CHUNKS_FILE"
+}
+
+chunk_owner() {
+  local chunk_id="$1"
+  jq -r --argjson id "$chunk_id" '.chunks[] | select(.id == $id) | .repo' "$CHUNKS_FILE"
+}
+
+repos_have_commit_evidence() {
+  local chunk_id before after owner repo
+  chunk_id="$1"
+  before="$2"
+  after="$3"
+  owner=$(chunk_owner "$chunk_id")
+  if [[ "$owner" == "all" || "$owner" == "both" ]]; then
+    for repo in $REPOS; do
+      jq -ne --arg repo "$repo" --argjson before "$before" --argjson after "$after" '$before[$repo] != $after[$repo]' >/dev/null || return 1
+    done
+    return 0
+  fi
+  jq -ne --arg repo "$owner" --argjson before "$before" --argjson after "$after" '$before[$repo] != $after[$repo]' >/dev/null
+}
+
+record_chunk_validation() {
+  local chunk_id="$1" iteration="$2" status="$3" exit_code="$4" started_at="$5" completed_at="$6" log_path="$7"
+  manifest_update --argjson chunk "$chunk_id" --argjson iter "$iteration" --arg status "$status" \
+    --argjson exit "$exit_code" --arg started "$started_at" --arg completed "$completed_at" --arg log "$log_path" \
+    '.validation.chunk_attempts += [{chunk_id:$chunk,iteration:$iter,status:$status,exit_code:$exit,started_at:$started,completed_at:$completed,log:$log}]' || true
+}
+
+run_chunk_validation() {
+  local chunk_id iteration validation_log
+  local started_at completed_at validation_pid validation_exit=0 validation_status
+  chunk_id="$1"
+  iteration="$2"
+  validation_log="$LOG_DIR/chunk-${chunk_id}-validation-${iteration}.log"
+  started_at=$(now_iso)
+  ACTIVE_VALIDATION_CHUNK="$chunk_id"
+  ACTIVE_VALIDATION_ITERATION="$iteration"
+  ACTIVE_VALIDATION_LOG="$validation_log"
+  ACTIVE_VALIDATION_STARTED="$started_at"
+  log_orchestrator "chunk_validation_started: chunk=$chunk_id iteration=$iteration log=$validation_log"
+  log_event "chunk_validation" "running" "chunk=$chunk_id iteration=$iteration"
+  (cd "$PROJECT_ROOT" && bash -lc "$CHUNK_VALIDATION_COMMAND") >"$validation_log" 2>&1 &
+  validation_pid=$!
+  ACTIVE_VALIDATION_PID="$validation_pid"
+  monitor_process_with_heartbeat "$validation_pid" "chunk validation=$chunk_id" "$validation_log" \
+    "$VALIDATION_HEARTBEAT_SEC" "$VALIDATION_IDLE_TIMEOUT_SEC" "$EVENT_LOG" || validation_exit=$?
+  completed_at=$(now_iso)
+  if [[ "$validation_exit" -eq 0 ]]; then validation_status="passed"; else validation_status="failed"; fi
+  log_orchestrator "chunk_validation_${validation_status}: chunk=$chunk_id iteration=$iteration exit=$validation_exit"
+  log_event "chunk_validation" "$validation_status" "chunk=$chunk_id iteration=$iteration exit=$validation_exit"
+  record_chunk_validation "$chunk_id" "$iteration" "$validation_status" "$validation_exit" "$started_at" "$completed_at" "$validation_log"
+  ACTIVE_VALIDATION_CHUNK=""; ACTIVE_VALIDATION_ITERATION=""; ACTIVE_VALIDATION_LOG=""; ACTIVE_VALIDATION_PID=""; ACTIVE_VALIDATION_STARTED=""
+  return "$validation_exit"
+}
+
+record_validation_feedback() {
+  local chunk_id="$1" iteration="$2" reason="$3" log_path="$4"
+  {
+    echo ""; echo "## Ralph validation feedback — chunk $chunk_id, iteration $iteration"; echo ""
+    echo "- Result: $reason"; echo "- Log: \`$log_path\`"
+    echo "- The chunk was reset to \`passes: false\`; inspect the log and repair before claiming completion again."
+  } >> "$SPRINT_DIR/SCRATCHPAD.md"
+}
+
+handle_loop_signal() {
+  local signal_name="$1" exit_code="$2"
+  log_orchestrator "signal_received: $signal_name"
+  log_event "signal" "interrupted" "$signal_name received"
+  if [[ -n "$ACTIVE_VALIDATION_CHUNK" ]]; then
+    kill_process_tree "$ACTIVE_VALIDATION_PID"
+    reset_chunk_pass "$ACTIVE_VALIDATION_CHUNK"
+    record_chunk_validation "$ACTIVE_VALIDATION_CHUNK" "$ACTIVE_VALIDATION_ITERATION" "interrupted" 13 \
+      "$ACTIVE_VALIDATION_STARTED" "$(now_iso)" "$ACTIVE_VALIDATION_LOG"
+    record_validation_feedback "$ACTIVE_VALIDATION_CHUNK" "$ACTIVE_VALIDATION_ITERATION" \
+      "chunk validation was interrupted by $signal_name" "$ACTIVE_VALIDATION_LOG"
+  fi
+  trap - EXIT
+  exit "$exit_code"
 }
 
 # ── Next Sprint ────────────────────────────────────────────
@@ -320,16 +420,18 @@ reconcile_completion_state() {
 
   echo ""
   echo "Running post-sprint hooks..."
-  run_post_sprint_hooks || true
+  run_post_sprint_hooks || return 14
 
-  if jq -e '([.hooks.review.status, .hooks.documentation.status, .hooks.tests.status] | all(. == "done" or . == "skipped"))' "$MANIFEST_FILE" >/dev/null 2>&1; then
+  if jq -e '([.hooks.review.status, .hooks.documentation.status, .hooks.validation.status] | all(. == "done" or . == "skipped"))' "$MANIFEST_FILE" >/dev/null 2>&1; then
     mark_hooks_phase_done || true
+    return 0
   fi
+  return 14
 }
 
 # ── Signal Traps ───────────────────────────────────────────
-trap 'log_orchestrator "signal_received: INT"; log_event "signal" "int" "INT received"; reconcile_completion_state; exit 130' INT
-trap 'log_orchestrator "signal_received: TERM"; log_event "signal" "term" "TERM received"; reconcile_completion_state; exit 143' TERM
+trap 'handle_loop_signal INT 130' INT
+trap 'handle_loop_signal TERM 143' TERM
 trap 'reconcile_completion_state' EXIT
 
 # ── Agent Commands ─────────────────────────────────────────
@@ -447,7 +549,10 @@ if all_chunks_pass_fn; then
   log_orchestrator "precheck: all_chunks_pass=true"
   log_event "precheck" "ok" "all_chunks_pass=true"
 
-  reconcile_completion_state
+  if ! reconcile_completion_state; then
+    trap - EXIT
+    exit 14
+  fi
 
   NEXT_SPRINT=$(get_next_sprint)
   if [[ -n "$NEXT_SPRINT" ]]; then
@@ -481,7 +586,9 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
   SUMMARY_LOG="$LOG_DIR/iteration-$i.summary.log"
   export SUMMARY_LOG
 
-  BEFORE_PASS_COUNT=$(passed_chunk_count)
+  BEFORE_PASS_IDS=$(passed_chunk_ids)
+  EXPECTED_CHUNK_ID=$(next_incomplete_chunk_id)
+  BEFORE_REPO_COMMITS=$(get_all_repo_commits)
 
   set +e
   run_agent_with_watchdog
@@ -492,29 +599,58 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
   log_event "iteration" "agent_done" "iteration=$i exit=$AGENT_EXIT"
 
   # ── State-Delta Completion Validation ──────────────────
-  AFTER_PASS_COUNT=$(passed_chunk_count)
-  PASS_DELTA=$((AFTER_PASS_COUNT - BEFORE_PASS_COUNT))
+  AFTER_PASS_IDS=$(passed_chunk_ids)
+  NEWLY_PASSED=$(jq -nc --argjson before "$BEFORE_PASS_IDS" --argjson after "$AFTER_PASS_IDS" '$after - $before')
+  REMOVED_PASSES=$(jq -nc --argjson before "$BEFORE_PASS_IDS" --argjson after "$AFTER_PASS_IDS" '$before - $after')
+  NEW_PASS_COUNT=$(jq 'length' <<<"$NEWLY_PASSED")
+  REMOVED_PASS_COUNT=$(jq 'length' <<<"$REMOVED_PASSES")
+  NEW_CHUNK_ID=$(jq -r '.[0] // empty' <<<"$NEWLY_PASSED")
+  TRANSITION_VALID=false
+  if [[ "$NEW_PASS_COUNT" -eq 1 && "$REMOVED_PASS_COUNT" -eq 0 && "$NEW_CHUNK_ID" == "$EXPECTED_CHUNK_ID" ]]; then
+    TRANSITION_VALID=true
+  fi
 
   COMPLETION_SCOPE=$(detect_completion_scope "$LOG_FILE")
   COMPLETION_SIGNAL=false
 
-  if all_chunks_pass_fn; then
-    COMPLETION_SIGNAL=true
-    log_orchestrator "completion_signal_detected: iteration=$i source=chunks_state"
-  elif [[ "$COMPLETION_SCOPE" == "sprint" ]]; then
-    COMPLETION_SIGNAL=true
-    log_orchestrator "completion_signal_detected: iteration=$i source=marker scope=sprint"
-  elif [[ "$COMPLETION_SCOPE" == "chunk" ]] || [[ "$COMPLETION_SCOPE" == "legacy_chunk" ]]; then
-    if (( PASS_DELTA > 0 )); then
+  if [[ "$COMPLETION_SCOPE" == "sprint" || "$COMPLETION_SCOPE" == "chunk" || "$COMPLETION_SCOPE" == "legacy_chunk" ]]; then
+    if [[ "$TRANSITION_VALID" == "true" ]]; then
       COMPLETION_SIGNAL=true
-      log_orchestrator "completion_signal_detected: iteration=$i source=marker scope=$COMPLETION_SCOPE delta=$PASS_DELTA"
+      log_orchestrator "completion_candidate_detected: iteration=$i scope=$COMPLETION_SCOPE chunk=$NEW_CHUNK_ID"
     else
-      log_orchestrator "completion_signal_ignored: iteration=$i source=marker scope=$COMPLETION_SCOPE delta=$PASS_DELTA"
-      log_event "completion" "ignored" "iteration=$i scope=$COMPLETION_SCOPE delta=$PASS_DELTA"
+      log_orchestrator "completion_signal_ignored: iteration=$i scope=$COMPLETION_SCOPE newly_passed=$NEWLY_PASSED removed=$REMOVED_PASSES expected=$EXPECTED_CHUNK_ID"
+      log_event "completion" "ignored" "iteration=$i invalid chunk transition"
     fi
   fi
 
+  if [[ "$TRANSITION_VALID" != "true" && "$NEW_PASS_COUNT" -gt 0 ]]; then
+    for changed_chunk in $(jq -r '.[]' <<<"$NEWLY_PASSED"); do reset_chunk_pass "$changed_chunk"; done
+  fi
+
   if [[ "$COMPLETION_SIGNAL" == "true" ]]; then
+    VALIDATION_LOG="$LOG_DIR/chunk-${NEW_CHUNK_ID}-validation-${i}.log"
+    if [[ "$CHUNK_VALIDATION_ENABLED" == "true" ]] && ! run_chunk_validation "$NEW_CHUNK_ID" "$i"; then
+      reset_chunk_pass "$NEW_CHUNK_ID"
+      record_validation_feedback "$NEW_CHUNK_ID" "$i" "configured chunk validation failed" "$VALIDATION_LOG"
+      echo "Chunk $NEW_CHUNK_ID validation failed; the completion claim was rejected."
+      tail -n 20 "$VALIDATION_LOG" 2>/dev/null || true
+      manifest_update --argjson iter "$i" '.iterations = $iter' || true
+      sleep 2
+      continue
+    fi
+
+    AFTER_REPO_COMMITS=$(get_all_repo_commits)
+    if [[ "${RALPH_AUTO_COMMIT:-false}" != "I_ACCEPT_GIT_ADD_ALL" ]] && ! repos_have_commit_evidence "$NEW_CHUNK_ID" "$BEFORE_REPO_COMMITS" "$AFTER_REPO_COMMITS"; then
+      reset_chunk_pass "$NEW_CHUNK_ID"
+      record_validation_feedback "$NEW_CHUNK_ID" "$i" "validation passed but the chunk-owned repositories have no new commit" "$VALIDATION_LOG"
+      log_orchestrator "completion_rejected: chunk=$NEW_CHUNK_ID iteration=$i reason=no_new_commit owner=$(chunk_owner "$NEW_CHUNK_ID") before=$BEFORE_REPO_COMMITS after=$AFTER_REPO_COMMITS"
+      log_event "completion" "rejected" "chunk=$NEW_CHUNK_ID iteration=$i reason=no_new_commit"
+      echo "Chunk $NEW_CHUNK_ID validation passed, but required repository commits were not created."
+      manifest_update --argjson iter "$i" '.iterations = $iter' || true
+      sleep 2
+      continue
+    fi
+
     echo ""
     echo "=========================================="
     echo "Chunk completed in iteration $i"
@@ -524,7 +660,7 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
     backup_commit_all_repos "ralph: chunk completed (iteration $i)" || exit $?
 
     REPO_COMMITS=$(get_all_repo_commits)
-    CHUNK_ID="$AFTER_PASS_COUNT"
+    CHUNK_ID="$NEW_CHUNK_ID"
     manifest_update \
       --argjson commits "$REPO_COMMITS" --argjson chunk "$CHUNK_ID" --argjson iter "$i" \
       '.commits += [{"chunk_id": $chunk, "iteration": $iter, "repos": $commits}] | .iterations = $iter' \
@@ -536,7 +672,10 @@ for i in $(seq "$START_ITERATION" "$MAX_ITERATIONS"); do
       log_orchestrator "sprint_chunks_complete: iteration=$i"
       log_event "sprint" "chunks_done" "iteration=$i"
 
-      reconcile_completion_state
+      if ! reconcile_completion_state; then
+        trap - EXIT
+        exit 14
+      fi
 
       NEXT_SPRINT=$(get_next_sprint)
       if [[ -n "$NEXT_SPRINT" ]]; then

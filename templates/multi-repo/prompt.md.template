@@ -13,7 +13,8 @@ The working directory is a parent orchestrator containing `.ralph/` and two or m
 5. Complete and verify that chunk's acceptance criteria only in the named repositories.
 6. Append decisions, discoveries, per-repository state, and remaining risks to `SCRATCHPAD.md`.
 7. Commit separately inside every changed child repository. Inspect status and stage only paths belonging to the chunk.
-8. Set the chunk's `passes` field to `true`, then emit `<promise>RALPH_CHUNK_COMPLETE</promise>`.
+8. Run the configured fast validation, set only this chunk's `passes` field to `true`, commit each chunk-owned repository, then emit `<promise>RALPH_CHUNK_COMPLETE</promise>`.
+9. Ralph independently reruns `RALPH_CHUNK_VALIDATION_COMMAND`; completion is only accepted after that gate passes.
 
 ## Repository rules
 
@@ -22,6 +23,7 @@ The working directory is a parent orchestrator containing `.ralph/` and two or m
 - Follow each repository's own agent instructions and validation commands.
 - Do not use broad staging such as `git add -A`; concurrent or unrelated work may exist.
 - A cross-repository chunk is complete only when its acceptance criteria pass across every affected repository.
+- Never mark multiple chunks passed in one iteration.
 
 ## Reference patterns
 

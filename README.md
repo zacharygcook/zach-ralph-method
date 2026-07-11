@@ -28,13 +28,13 @@ SPEC → PLAN → CHUNKS → IMPLEMENT → VERIFY → COMMIT
 Clone this repository, then install into a Git repository:
 
 ```bash
-python3 scripts/ralph.py init --repo /path/to/project --agent codex --test-command "your test command"
+python3 scripts/ralph.py init --repo /path/to/project --agent codex --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
 ```
 
 For a parent directory containing multiple child Git repositories:
 
 ```bash
-python3 scripts/ralph.py init --repo /path/to/parent --mode multi-repo --repos api web --primary-repo api --agent codex --test-command "your cross-repo test command"
+python3 scripts/ralph.py init --repo /path/to/parent --mode multi-repo --repos api web --primary-repo api --agent codex --chunk-validation-command "your fast cross-repo check" --sprint-validation-command "your full cross-repo check"
 ```
 
 The installer creates `.ralph/` but leaves autonomous execution disarmed. Review `.ralph/config.env`, create a sprint, then explicitly set `RALPH_UNATTENDED_APPROVED=true` when you are ready—or pass `--approve-unattended` only when that authorization is deliberate.
@@ -73,9 +73,22 @@ Custom commands receive:
 
 ## Safety model
 
-The default installation will not run autonomously. It also will not auto-commit. If a project deliberately enables runtime backup commits, both `RALPH_AUTO_COMMIT=true` and `I_ACCEPT_GIT_ADD_ALL=true` are required. Normal agent prompts instruct scoped staging instead.
+The default installation will not run autonomously. It also will not auto-commit. A project must set
+`RALPH_AUTO_COMMIT=I_ACCEPT_GIT_ADD_ALL` to deliberately enable broad backup commits. Normal agent
+prompts instruct scoped staging instead.
 
 `--update-runtime` refreshes only managed runtime files. It preserves operator configuration, sprints, logs, and scratchpad state, and refuses mode changes or managed symlinks that could escape `.ralph/`.
+
+## Evidence-gated completion
+
+An agent's completion marker is a candidate, not proof. Ralph accepts exactly one next sequential
+chunk per iteration, reruns `RALPH_CHUNK_VALIDATION_COMMAND`, and requires a new commit in the
+chunk-owned repository or repositories. Failed validation resets only that chunk to `passes: false`,
+records the attempt and log in the manifest, and adds a repair handoff to `SCRATCHPAD.md`.
+
+After review and documentation hooks finish, `RALPH_SPRINT_VALIDATION_COMMAND` verifies the actual
+final repository state; optional E2E runs last. A repository may call the same fast command from a
+pre-commit hook for earlier feedback, but Ralph's independent gate remains authoritative.
 
 ## Validation and portability
 
