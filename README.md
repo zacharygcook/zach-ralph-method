@@ -25,66 +25,45 @@ SPEC → PLAN → CHUNKS → IMPLEMENT → VERIFY → COMMIT
 
 ## Install in 30 seconds
 
-From the Git repository you want Ralph to manage, vendor the complete private skill with the Skills
-CLI. Your local GitHub credentials must have access to `zach-ralph-method`:
+Ralph's human interface uses [`just`](https://just.systems). It is one native command-runner binary,
+with no runtime language or framework. Since Skills CLI already requires npm, this is the shortest
+cross-platform install; the official docs also list Homebrew, apt, pacman, winget, Scoop, and others.
+
+```bash
+npm install -g rust-just
+```
+
+From the Git repository you want Ralph to manage, vendor the skill and copy its tiny recipe import:
 
 ```bash
 npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy
+cp -n .agents/skills/ralph-workflows/justfile .
 ```
 
-Confirm the project-local installation:
+Now initialize interactively:
 
 ```bash
-npx skills@latest list
+just init
 ```
 
-The Skills CLI detects the active coding agent. Pass `--agent <name>` only when targeting one
-explicitly; `--agent '*'` intentionally installs copies for every supported client.
+The setup asks for the harness, exact model, sprint and per-chunk turn budgets, fast chunk validation,
+and comprehensive sprint validation. It does not guess operator choices.
 
-### What `npx skills` manages
-
-Ralph has two deliberately separate layers:
-
-| Layer | Use | Why |
-| --- | --- | --- |
-| Skill package | `npx skills add`, `update`, `list`, `remove`, and `experimental_install` | Vendor and refresh instructions, scripts, and templates without a manual clone. |
-| Project runtime | Bundled `ralph` launcher and `.ralph/loop.sh` | Safely initialize, migrate, validate, inspect, and run repository-owned state. |
-
-`npx skills` is the primary package manager. It intentionally does not execute arbitrary
-post-install hooks, so the bundled `ralph` launcher remains necessary when creating or migrating the
-stateful `.ralph/` runtime.
-
-### Initialize a new project
-
-After the `npx skills add` command, initialize from the vendored copy. In a terminal, let the
-installer ask for every operator-owned choice:
+### Everyday commands
 
 ```bash
-./.agents/skills/ralph-workflows/scripts/ralph init --repo . --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+just init       # configure a new or existing runtime
+just upgrade    # update the skill and runtime safely
+just validate   # check readiness without running
+just status     # inspect the current sprint
+just run        # validate, then start
+just resume     # validate, then resume
 ```
 
-It asks for the harness, exact model, sprint turn budget, and per-chunk turn budget without proposing
-defaults. For scripts, agents, and other noninteractive callers, pass all four explicitly:
-
-```bash
-./.agents/skills/ralph-workflows/scripts/ralph init --repo . --agent "your harness" --model "your model" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
-```
-
-The `ralph` launcher accepts either a `python3` or `python` executable backed by Python 3.11 or newer,
-so operator commands do not depend on a platform-specific interpreter name.
-
-### Update an existing project
-
-Refresh the vendored skill first, then safely migrate its generated runtime:
-
-```bash
-npx skills@latest update ralph-workflows --project
-./.agents/skills/ralph-workflows/scripts/ralph upgrade --repo .
-```
-
-Both `init --repo .` and `upgrade --repo .` detect an existing runtime, preserve configuration,
-sprints, logs, and scratchpads, and interactively request any missing operator choices. A legacy
-runtime without validation gates stops and requests the missing commands instead of guessing them.
+Run `just` by itself to see the command list. The root `justfile` imports versioned recipes from the
+vendored skill, so `just upgrade` refreshes commands without replacing your project file.
+If the project already has a `justfile`, add
+`import '.agents/skills/ralph-workflows/recipes.just'` to it instead of replacing it.
 
 ### Restore skills from a committed lockfile
 
@@ -104,7 +83,7 @@ the reproducible source declaration.
 Before the first sprint, have:
 
 - A Git repository with a known baseline and no unexplained concurrent changes.
-- Node.js/npm with `npx` for installing or updating the skill.
+- Node.js/npm with `npx`, plus `just`, for installing and operating the skill.
 - Bash, Git, `jq`, and Python 3 for the generated runtime.
 - A supported coding-agent CLI: Codex, Claude Code, Droid, Amp, OpenCode, or a configured custom command.
 - A durable `SPEC.md` (or equivalent source of truth) describing the desired system and boundaries.
@@ -155,16 +134,16 @@ contains `README.md`, `IMPLEMENTATION_PLAN.md`, `relevant-specs.md`, `chunks.jso
 After reviewing `.ralph/config.env`, run:
 
 ```bash
-./.ralph/loop.sh
+just run
 ```
 
 Inspect progress at any time with:
 
 ```bash
-./.agents/skills/ralph-workflows/scripts/ralph status --repo .
+just status
 ```
 
-Use `./.ralph/loop.sh --resume` after interruption. Use `--force-hooks` only when intentionally
+Use `just resume` after interruption. Use the automation interface below only when intentionally
 rerunning completed post-sprint hooks.
 
 ### Which workflow should I ask for?
@@ -224,6 +203,18 @@ records the attempt and log in the manifest, and adds a repair handoff to `SCRAT
 After review and documentation hooks finish, `RALPH_SPRINT_VALIDATION_COMMAND` verifies the actual
 final repository state; optional E2E runs last. A repository may call the same fast command from a
 pre-commit hook for earlier feedback, but Ralph's independent gate remains authoritative.
+
+## Automation interface
+
+Agents and scripts can bypass the interactive recipes by passing every decision explicitly:
+
+```bash
+./.agents/skills/ralph-workflows/scripts/ralph init --repo . --agent "your harness" --model "your model" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+./.agents/skills/ralph-workflows/scripts/ralph upgrade --repo .
+./.agents/skills/ralph-workflows/scripts/ralph validate --repo .
+./.ralph/loop.sh --resume
+./.ralph/loop.sh --force-hooks
+```
 
 ## Validation and portability
 

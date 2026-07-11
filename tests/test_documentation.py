@@ -13,16 +13,19 @@ class DocumentationContractTest(unittest.TestCase):
     def test_readme_prioritizes_skills_cli_before_runtime_commands(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         add = "npx skills@latest add"
-        update = "npx skills@latest update"
         restore = "npx skills@latest experimental_install"
         runtime = "./.agents/skills/ralph-workflows/scripts/ralph"
-        for command in (add, update, restore, runtime):
+        for command in (add, restore, runtime):
             self.assertIn(command, readme)
         self.assertLess(readme.index(add), readme.index(runtime))
-        self.assertIn("What `npx skills` manages", readme)
         self.assertNotIn(" --copy -y", readme)
         self.assertNotIn(" --project -y", readme)
-        self.assertIn("detect an existing runtime", readme)
+        human = readme.split("## Automation interface", 1)[0]
+        automation = readme.split("## Automation interface", 1)[1]
+        self.assertIn("just init", human)
+        self.assertIn("just upgrade", human)
+        self.assertNotIn("/scripts/ralph init", human)
+        self.assertIn("/scripts/ralph init", automation)
 
     def test_quick_start_is_an_actionable_operator_journey(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -36,16 +39,18 @@ class DocumentationContractTest(unittest.TestCase):
         self.assertIn("exact model", quick_start)
         self.assertIn("maximum sprint turns", quick_start)
         self.assertIn("maximum turns per chunk", quick_start)
-        self.assertIn("./.ralph/loop.sh", quick_start)
+        self.assertIn("just run", quick_start)
         self.assertIn("Which workflow should I ask for?", quick_start)
 
     def test_skill_explains_package_and_runtime_boundary(self) -> None:
         skill = (ROOT / "skill" / "SKILL.md").read_text(encoding="utf-8")
         normalized = " ".join(skill.split())
-        self.assertIn("npx skills@latest update ralph-workflows", skill)
+        self.assertIn("just upgrade", skill)
         self.assertIn("does not run arbitrary lifecycle hooks", normalized)
         self.assertIn("Do not ask the operator to hand-build `.ralph/`", skill)
         self.assertTrue((ROOT / "skill" / "references" / "first-run.md").is_file())
+        self.assertTrue((ROOT / "skill" / "justfile").is_file())
+        self.assertTrue((ROOT / "skill" / "recipes.just").is_file())
 
 
 if __name__ == "__main__":

@@ -6,6 +6,8 @@
     {"source": "skill/SKILL.md", "target": "SKILL.md"},
     {"source": "skill/agents", "target": "agents"},
     {"source": "skill/references", "target": "references"},
+    {"source": "skill/justfile", "target": "justfile"},
+    {"source": "skill/recipes.just", "target": "recipes.just"},
     {"source": "VERSION", "target": "assets/VERSION"},
     {"source": "templates", "target": "assets/templates"},
     {"source": "scripts/ralph", "target": "scripts/ralph"},

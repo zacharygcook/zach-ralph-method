@@ -16,7 +16,8 @@ When a user asks how to start, preflight the repository instead of explaining sp
    equivalent; and credible fast chunk plus comprehensive sprint validation commands. Node.js/npm
    and `npx` are required when the skill still needs to be installed or updated.
 2. Read repository agent instructions and the spec before choosing commands or planning work.
-3. Install or upgrade the deterministic runtime with the reviewed harness, model, and budgets.
+3. Ensure `just` is available and install the project recipe import without overwriting an existing
+   `justfile`; then initialize or upgrade the deterministic runtime with reviewed choices.
 4. Break the spec into dependency-ordered sprints, create only the first sprint under
    `.ralph/sprints/`, set `CURRENT_SPRINT`, and validate the complete setup.
 5. Tell the operator what to review and stop before running. Invoking `.ralph/loop.sh` starts the
@@ -39,6 +40,12 @@ instructions, installer, and runtime templates. Use `--agent <name>` only to tar
 `--agent '*'` deliberately creates adapter copies for every supported client. Run the bundled
 `scripts/ralph` launcher from the detected skill directory; it selects Python 3.11+ from either the
 `python3` or `python` command.
+
+For human operation, copy the bundled `justfile` to a project that does not already have one. When a
+project has an existing `justfile`, add
+`import '.agents/skills/ralph-workflows/recipes.just'` without replacing existing recipes. Prefer
+`just init`, `just upgrade`, `just validate`, `just status`, `just run`, and `just resume` in
+operator-facing instructions. Keep the fully explicit launcher commands for agents and automation.
 
 For a repository that already has `skills-lock.json`, refresh the package before upgrading the
 project runtime:

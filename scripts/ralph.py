@@ -61,6 +61,42 @@ def prompt_positive_integer(label: str) -> int:
         print("Enter a positive integer.", file=sys.stderr)
 
 
+def prompt_command(label: str) -> str:
+    value = input(f"{label}: ").strip()
+    if not value:
+        raise RalphError(f"{label} cannot be empty")
+    return value
+
+
+def resolve_validation_commands(
+    chunk_enabled: bool,
+    chunk_command: str,
+    sprint_enabled: bool,
+    sprint_command: str,
+    context: str,
+) -> tuple[str, str]:
+    missing = []
+    if chunk_enabled and not chunk_command:
+        missing.append("--chunk-validation-command")
+    if sprint_enabled and not sprint_command:
+        missing.append("--sprint-validation-command")
+    if not missing:
+        return chunk_command, sprint_command
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise RalphError(
+            f"Missing validation choices for noninteractive {context}: "
+            + ", ".join(missing)
+        )
+    print("Configure repository validation. No commands are assumed.")
+    if chunk_enabled and not chunk_command:
+        chunk_command = prompt_command("Fast command to validate each chunk")
+    if sprint_enabled and not sprint_command:
+        sprint_command = prompt_command(
+            "Comprehensive command to validate the completed sprint"
+        )
+    return chunk_command, sprint_command
+
+
 def resolve_init_operator_choices(arguments: argparse.Namespace) -> None:
     """Collect missing operator intent interactively or fail clearly in automation."""
     missing = []
@@ -249,18 +285,17 @@ def install(arguments: argparse.Namespace) -> Path:
         raise RalphError("New runtimes require --model for the selected agent harness")
     if arguments.max_sprint_iterations < 1 or arguments.max_chunk_iterations < 1:
         raise RalphError("Iteration budgets must be positive integers")
-    if not arguments.disable_chunk_validation and not arguments.chunk_validation_command:
-        raise RalphError(
-            "New runtimes require --chunk-validation-command unless --disable-chunk-validation is explicit"
+    chunk_enabled = not arguments.disable_chunk_validation
+    sprint_enabled = not arguments.disable_sprint_validation and not arguments.disable_tests
+    arguments.chunk_validation_command, arguments.sprint_validation_command = (
+        resolve_validation_commands(
+            chunk_enabled,
+            arguments.chunk_validation_command or "",
+            sprint_enabled,
+            arguments.sprint_validation_command or arguments.test_command or "",
+            "init",
         )
-    if (
-        not arguments.disable_sprint_validation
-        and not arguments.disable_tests
-        and not (arguments.sprint_validation_command or arguments.test_command)
-    ):
-        raise RalphError(
-            "New runtimes require --sprint-validation-command unless --disable-sprint-validation is explicit"
-        )
+    )
 
     target.mkdir(parents=True, exist_ok=True)
     if config.is_symlink():
@@ -404,6 +439,7 @@ def upgrade(arguments: argparse.Namespace) -> Path:
     sprint_enabled = (
         "false"
         if arguments.disable_sprint_validation
+        or getattr(arguments, "disable_tests", False)
         else (
             "true"
             if arguments.sprint_validation_command
@@ -413,14 +449,13 @@ def upgrade(arguments: argparse.Namespace) -> Path:
             )
         )
     )
-    if chunk_enabled == "true" and not chunk_command:
-        raise RalphError(
-            "Upgrade requires --chunk-validation-command unless --disable-chunk-validation is explicit"
-        )
-    if sprint_enabled == "true" and not sprint_command:
-        raise RalphError(
-            "Upgrade requires --sprint-validation-command unless --disable-sprint-validation is explicit"
-        )
+    chunk_command, sprint_command = resolve_validation_commands(
+        chunk_enabled == "true",
+        chunk_command,
+        sprint_enabled == "true",
+        sprint_command,
+        "upgrade",
+    )
 
     # Validate every managed destination before changing any runtime file.
     sources = runtime_sources(mode)

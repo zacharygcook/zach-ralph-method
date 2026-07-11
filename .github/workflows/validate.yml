@@ -24,5 +24,7 @@ jobs:
         run: brew install jq
       - name: Validate Python
         run: python -m compileall -q scripts tests templates/shared
+      - name: Install just
+        run: npm install --global rust-just
       - name: Run clean-room tests
         run: python -m unittest discover -s tests -v

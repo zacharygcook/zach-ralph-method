@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import shlex
 import subprocess
 import sys
@@ -116,6 +117,24 @@ def create_sprint(root: Path, name: str = "1-demo", repo: str | None = None) -> 
 
 
 class RalphRuntimeTest(unittest.TestCase):
+    def test_justfile_exposes_short_human_commands_from_project_root(self) -> None:
+        just = shutil.which("just")
+        self.assertIsNotNone(just, "CI and development require the just binary")
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            repo.mkdir()
+            target = repo / ".agents" / "skills" / "ralph-workflows"
+            shutil.copytree(MODULE_PATH.parents[1] / "skill", target)
+            shutil.copy2(target / "justfile", repo / "justfile")
+            listed = run(str(just), "--list", cwd=repo)
+            self.assertEqual(listed.returncode, 0, listed.stderr)
+            for recipe in ("init", "upgrade", "validate", "status", "run", "resume"):
+                self.assertIn(recipe, listed.stdout)
+            dry_run = run(str(just), "--dry-run", "init", cwd=repo)
+            self.assertEqual(dry_run.returncode, 0, dry_run.stderr)
+            self.assertIn("scripts/ralph", dry_run.stderr)
+            self.assertIn("init --repo", dry_run.stderr)
+
     def test_launcher_supports_python_or_python3_without_documenting_either(self) -> None:
         launcher = MODULE_PATH.with_name("ralph")
         with tempfile.TemporaryDirectory() as directory:
@@ -304,6 +323,35 @@ class RalphRuntimeTest(unittest.TestCase):
         self.assertEqual(arguments.model, "chosen-model")
         self.assertEqual(arguments.max_sprint_iterations, 11)
         self.assertEqual(arguments.max_chunk_iterations, 2)
+
+    def test_interactive_init_collects_repository_validation_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            arguments = ralph.build_parser().parse_args(["init", "--repo", str(repo)])
+            with (
+                mock.patch("sys.stdin.isatty", return_value=True),
+                mock.patch("sys.stdout.isatty", return_value=True),
+                mock.patch(
+                    "builtins.input",
+                    side_effect=[
+                        "codex",
+                        "chosen-model",
+                        "11",
+                        "2",
+                        "./scripts/fast-check.sh",
+                        "./scripts/full-check.sh",
+                    ],
+                ),
+            ):
+                ralph.install(arguments)
+            config = ralph.parse_config(repo / ".ralph" / "config.env")
+            self.assertEqual(
+                config["RALPH_CHUNK_VALIDATION_COMMAND"], "./scripts/fast-check.sh"
+            )
+            self.assertEqual(
+                config["RALPH_SPRINT_VALIDATION_COMMAND"], "./scripts/full-check.sh"
+            )
 
     def test_templates_and_loop_runtime_do_not_assume_operator_choices(self) -> None:
         for mode in ralph.MODES:
