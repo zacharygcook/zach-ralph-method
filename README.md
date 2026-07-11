@@ -25,22 +25,23 @@ SPEC → PLAN → CHUNKS → IMPLEMENT → VERIFY → COMMIT
 
 ## Install in 30 seconds
 
-Ralph's human interface uses [`just`](https://just.systems). It is one native command-runner binary,
-with no runtime language or framework. Since Skills CLI already requires npm, this is the shortest
-cross-platform install; the official docs also list Homebrew, apt, pacman, winget, Scoop, and others.
+Install [`just`](https://just.systems) with your package manager:
 
 ```bash
-npm install -g rust-just
+brew install just                         # macOS
+sudo apt install just                     # Ubuntu / Debian
+sudo pacman -S just                       # Arch Linux
+winget install --id Casey.Just --exact    # Windows
 ```
 
-From the Git repository you want Ralph to manage, vendor the skill and copy its tiny recipe import:
+From the Git repository you want Ralph to manage:
 
 ```bash
-npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy
-cp -n .agents/skills/ralph-workflows/justfile .
+npx zacharygcook/zach-ralph-method
 ```
 
-Now initialize interactively:
+The installer vendors the repository's single skill and safely adds its recipes to an existing or
+new project `justfile`. Then initialize interactively:
 
 ```bash
 just init
@@ -62,15 +63,13 @@ just resume     # validate, then resume
 
 Run `just` by itself to see the command list. The root `justfile` imports versioned recipes from the
 vendored skill, so `just upgrade` refreshes commands without replacing your project file.
-If the project already has a `justfile`, add
-`import '.agents/skills/ralph-workflows/recipes.just'` to it instead of replacing it.
 
 ### Restore skills from a committed lockfile
 
 When a repository already contains `skills-lock.json`, restore its pinned project skills with:
 
 ```bash
-npx skills@latest experimental_install
+npx skills experimental_install
 ```
 
 The command name is currently marked experimental by the Skills CLI; the committed lockfile remains

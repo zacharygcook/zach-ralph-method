@@ -29,10 +29,18 @@ are routed workflows backed by the references below, not separately required ski
 
 ## Deterministic runtime
 
-Vendor this skill into a project with the upstream Skills CLI:
+Bootstrap the human interface from the project repository:
 
 ```bash
-npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy
+npx zacharygcook/zach-ralph-method
+```
+
+The installer delegates to the upstream Skills CLI, which discovers this repository's single skill,
+then safely adds the versioned recipe import to a new or existing project `justfile`. For agent-owned
+or noninteractive package management, the underlying command is:
+
+```bash
+npx skills add zacharygcook/zach-ralph-method
 ```
 
 The CLI detects the active coding agent and creates a project-local skill copy containing the
@@ -41,21 +49,19 @@ instructions, installer, and runtime templates. Use `--agent <name>` only to tar
 `scripts/ralph` launcher from the detected skill directory; it selects Python 3.11+ from either the
 `python3` or `python` command.
 
-For human operation, copy the bundled `justfile` to a project that does not already have one. When a
-project has an existing `justfile`, add
-`import '.agents/skills/ralph-workflows/recipes.just'` without replacing existing recipes. Prefer
-`just init`, `just upgrade`, `just validate`, `just status`, `just run`, and `just resume` in
-operator-facing instructions. Keep the fully explicit launcher commands for agents and automation.
+Prefer `just init`, `just upgrade`, `just validate`, `just status`, `just run`, and `just resume` in
+operator-facing instructions. Keep the underlying Skills CLI and fully explicit launcher commands
+for agents and automation.
 
 For a repository that already has `skills-lock.json`, refresh the package before upgrading the
 project runtime:
 
 ```bash
-npx skills@latest update ralph-workflows --project
+npx skills update ralph-workflows --project
 <skill-dir>/scripts/ralph upgrade --repo <repository>
 ```
 
-Use `npx skills@latest experimental_install` to restore pinned project skills from a committed
+Use `npx skills experimental_install` to restore pinned project skills from a committed
 lockfile on another machine. `npx skills` owns skill packaging; the bundled runtime command owns
 stateful `.ralph/` initialization, migration, validation, and status because the package manager does
 not run arbitrary lifecycle hooks.

@@ -14,7 +14,7 @@ init:
 
 [doc('Update the skill and safely upgrade the runtime')]
 upgrade:
-    npx skills@latest update ralph-workflows --project
+    npx skills update ralph-workflows --project
     "{{ ralph }}" upgrade --repo "{{ repo }}"
 
 [doc('Validate runtime, configuration, and sprint state')]

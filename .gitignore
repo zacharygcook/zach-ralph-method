@@ -6,6 +6,8 @@ blackbird/
 !docs/
 !templates/
 !scripts/
+!bin/
+!package.json
 !tests/
 !skill/
 !.github/

@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class DocumentationContractTest(unittest.TestCase):
     def test_readme_prioritizes_skills_cli_before_runtime_commands(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        add = "npx skills@latest add"
-        restore = "npx skills@latest experimental_install"
+        add = "npx zacharygcook/zach-ralph-method"
+        restore = "npx skills experimental_install"
         runtime = "./.agents/skills/ralph-workflows/scripts/ralph"
         for command in (add, restore, runtime):
             self.assertIn(command, readme)
@@ -25,6 +25,9 @@ class DocumentationContractTest(unittest.TestCase):
         self.assertIn("just init", human)
         self.assertIn("just upgrade", human)
         self.assertNotIn("/scripts/ralph init", human)
+        self.assertNotIn("@latest", human)
+        self.assertNotIn("--skill ralph-workflows", human)
+        self.assertNotIn("cp -n", human)
         self.assertIn("/scripts/ralph init", automation)
 
     def test_quick_start_is_an_actionable_operator_journey(self) -> None:

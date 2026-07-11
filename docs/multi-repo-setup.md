@@ -19,7 +19,7 @@ Repository names are configuration, not conventions. The parent directory does n
 Vendor the skill from the shared parent directory first:
 
 ```bash
-npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy
+npx skills add zacharygcook/zach-ralph-method
 ```
 
 Then initialize the parent runtime from the vendored package:
