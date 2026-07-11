@@ -44,6 +44,57 @@ class RalphError(ValueError):
     pass
 
 
+def prompt_choice(label: str, choices: set[str]) -> str:
+    ordered = ", ".join(sorted(choices))
+    while True:
+        value = input(f"{label} ({ordered}): ").strip()
+        if value in choices:
+            return value
+        print(f"Choose one of: {ordered}", file=sys.stderr)
+
+
+def prompt_positive_integer(label: str) -> int:
+    while True:
+        value = input(f"{label}: ").strip()
+        if value.isdigit() and int(value) > 0:
+            return int(value)
+        print("Enter a positive integer.", file=sys.stderr)
+
+
+def resolve_init_operator_choices(arguments: argparse.Namespace) -> None:
+    """Collect missing operator intent interactively or fail clearly in automation."""
+    missing = []
+    if not arguments.agent:
+        missing.append("--agent")
+    if arguments.agent != "custom" and not arguments.model:
+        missing.append("--model")
+    if arguments.max_sprint_iterations is None:
+        missing.append("--max-sprint-iterations")
+    if arguments.max_chunk_iterations is None:
+        missing.append("--max-chunk-iterations")
+    if not missing:
+        return
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise RalphError(
+            "Missing operator choices for noninteractive init: " + ", ".join(missing)
+        )
+    print("Configure Ralph operator controls. No choices are assumed.")
+    if not arguments.agent:
+        arguments.agent = prompt_choice("Agent harness", AGENTS)
+    if arguments.agent != "custom" and not arguments.model:
+        arguments.model = input("Exact model: ").strip()
+        if not arguments.model:
+            raise RalphError("An explicit model is required for a standard harness")
+    if arguments.max_sprint_iterations is None:
+        arguments.max_sprint_iterations = prompt_positive_integer(
+            "Maximum agent turns for the sprint"
+        )
+    if arguments.max_chunk_iterations is None:
+        arguments.max_chunk_iterations = prompt_positive_integer(
+            "Maximum agent turns per chunk"
+        )
+
+
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -158,6 +209,7 @@ def install(arguments: argparse.Namespace) -> Path:
             f"Refusing to overwrite existing runtime: {target}; use --update-runtime"
         )
     if not target.exists():
+        resolve_init_operator_choices(arguments)
         if arguments.agent != "custom" and not arguments.model:
             raise RalphError(
                 "New runtimes require --model for the selected agent harness"
@@ -304,23 +356,31 @@ def upgrade(arguments: argparse.Namespace) -> Path:
         or config.get("RALPH_TEST_COMMAND", "")
     )
     model = arguments.model or config.get("RALPH_AGENT_MODEL", "")
-    agent = config.get("RALPH_AGENT", "")
-    if agent != "custom" and not model:
-        raise RalphError(
-            "Upgrade requires --model because the installed standard harness has no explicit model"
-        )
+    agent = arguments.agent or config.get("RALPH_AGENT", "")
     max_sprint_iterations = (
         arguments.max_sprint_iterations
         if arguments.max_sprint_iterations is not None
         else config.get("MAX_SPRINT_ITERATIONS")
         or config.get("MAX_ITERATIONS")
-        or "30"
     )
     max_chunk_iterations = (
         arguments.max_chunk_iterations
         if arguments.max_chunk_iterations is not None
-        else config.get("MAX_CHUNK_ITERATIONS") or "5"
+        else config.get("MAX_CHUNK_ITERATIONS")
     )
+    missing_choices = []
+    if agent not in AGENTS:
+        missing_choices.append("--agent")
+    if agent != "custom" and not model:
+        missing_choices.append("--model")
+    if max_sprint_iterations is None or str(max_sprint_iterations) == "":
+        missing_choices.append("--max-sprint-iterations")
+    if max_chunk_iterations is None or str(max_chunk_iterations) == "":
+        missing_choices.append("--max-chunk-iterations")
+    if missing_choices:
+        raise RalphError(
+            "Missing operator choices for upgrade: " + ", ".join(missing_choices)
+        )
     for label, value in (
         ("MAX_SPRINT_ITERATIONS", str(max_sprint_iterations)),
         ("MAX_CHUNK_ITERATIONS", str(max_chunk_iterations)),
@@ -374,6 +434,7 @@ def upgrade(arguments: argparse.Namespace) -> Path:
         ),
         {
             "RALPH_MODE": mode,
+            "RALPH_AGENT": agent,
             "RALPH_AGENT_MODEL": shell_value(model),
             "MAX_SPRINT_ITERATIONS": str(max_sprint_iterations),
             "MAX_CHUNK_ITERATIONS": str(max_chunk_iterations),
@@ -746,7 +807,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Child repository directory names for multi-repo mode.",
     )
     init_parser.add_argument("--primary-repo")
-    init_parser.add_argument("--agent", choices=sorted(AGENTS), default="codex")
+    init_parser.add_argument("--agent", choices=sorted(AGENTS))
     init_parser.add_argument("--model")
     init_parser.add_argument(
         "--agent-command",
@@ -759,8 +820,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Deprecated alias for --sprint-validation-command.",
     )
     init_parser.add_argument("--e2e-command")
-    init_parser.add_argument("--max-sprint-iterations", type=int, default=30)
-    init_parser.add_argument("--max-chunk-iterations", type=int, default=5)
+    init_parser.add_argument("--max-sprint-iterations", type=int)
+    init_parser.add_argument("--max-chunk-iterations", type=int)
     init_parser.add_argument("--disable-review", action="store_true")
     init_parser.add_argument("--disable-documentation", action="store_true")
     init_parser.add_argument("--disable-tests", action="store_true")
@@ -771,6 +832,7 @@ def build_parser() -> argparse.ArgumentParser:
         "upgrade", help="Safely refresh an installed runtime and migrate validation gates."
     )
     upgrade_parser.add_argument("--repo", type=Path, default=Path.cwd())
+    upgrade_parser.add_argument("--agent", choices=sorted(AGENTS))
     upgrade_parser.add_argument("--model")
     upgrade_parser.add_argument("--max-sprint-iterations", type=int)
     upgrade_parser.add_argument("--max-chunk-iterations", type=int)
@@ -796,11 +858,13 @@ def main() -> int:
     try:
         if arguments.command == "init":
             target = install(arguments)
+            config = parse_config(target / "config.env")
             print(f"Installed Ralph runtime {runtime_version()}: {target}")
             print(
-                f"Harness={arguments.agent} model={arguments.model or 'custom-command'} "
-                f"sprint-turns={arguments.max_sprint_iterations} "
-                f"chunk-turns={arguments.max_chunk_iterations}"
+                f"Harness={config.get('RALPH_AGENT') or 'unset'} "
+                f"model={config.get('RALPH_AGENT_MODEL') or 'custom-command'} "
+                f"sprint-turns={config.get('MAX_SPRINT_ITERATIONS') or 'unset'} "
+                f"chunk-turns={config.get('MAX_CHUNK_ITERATIONS') or 'unset'}"
             )
             return 0
         if arguments.command == "validate":

@@ -8,9 +8,9 @@ source "$SCRIPT_DIR/config.env"
 source "$SCRIPT_DIR/lib/ralph-common.sh"
 
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-MAX_SPRINT_ITERATIONS="${MAX_SPRINT_ITERATIONS:-${MAX_ITERATIONS:-30}}"
-MAX_CHUNK_ITERATIONS="${MAX_CHUNK_ITERATIONS:-5}"
-AGENT="${RALPH_AGENT:-${AGENT:-}}"
+MAX_SPRINT_ITERATIONS="${MAX_SPRINT_ITERATIONS:-}"
+MAX_CHUNK_ITERATIONS="${MAX_CHUNK_ITERATIONS:-}"
+AGENT="${RALPH_AGENT:-}"
 MODEL="${RALPH_AGENT_MODEL:-}"
 CURRENT_SPRINT="${CURRENT_SPRINT:-}"
 HEARTBEAT_SEC="${HEARTBEAT_SEC:-30}"
@@ -39,7 +39,18 @@ for budget in "$MAX_SPRINT_ITERATIONS" "$MAX_CHUNK_ITERATIONS"; do
     exit 12
   fi
 done
-if [[ -z "${RALPH_AGENT_COMMAND:-}" && -z "$MODEL" ]]; then
+case "$AGENT" in
+  amp|claude|codex|droid|opencode|custom) ;;
+  *)
+    echo "RALPH_AGENT must explicitly select amp, claude, codex, droid, opencode, or custom"
+    exit 12
+    ;;
+esac
+if [[ "$AGENT" == "custom" && -z "${RALPH_AGENT_COMMAND:-}" ]]; then
+  echo "RALPH_AGENT_COMMAND is required for the custom harness"
+  exit 12
+fi
+if [[ "$AGENT" != "custom" && -z "$MODEL" ]]; then
   echo "RALPH_AGENT_MODEL is required for the $AGENT harness"
   exit 12
 fi

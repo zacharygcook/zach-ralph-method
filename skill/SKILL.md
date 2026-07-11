@@ -55,20 +55,21 @@ not run arbitrary lifecycle hooks.
 Install the bundled hardened Bash runtime only when the user asks to initialize or repair Ralph:
 
 ```bash
-python3 <skill-dir>/scripts/ralph.py init --repo <repository> --agent <agent> --model '<model>' --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
+python3 <skill-dir>/scripts/ralph.py init --repo <repository> --agent <agent> --model '<model>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
 ```
 
 For a parent directory containing independent child Git repositories, use multi-repo mode:
 
 ```bash
-python3 <skill-dir>/scripts/ralph.py init --repo <parent> --mode multi-repo --repos <repo-a> <repo-b> --primary-repo <repo-a> --agent <agent> --model '<model>' --chunk-validation-command '<fast cross-repo command>' --sprint-validation-command '<full cross-repo command>'
+python3 <skill-dir>/scripts/ralph.py init --repo <parent> --mode multi-repo --repos <repo-a> <repo-b> --primary-repo <repo-a> --agent <agent> --model '<model>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast cross-repo command>' --sprint-validation-command '<full cross-repo command>'
 ```
 
 Initialization is non-destructive: it refuses an existing `.ralph/` unless `--update-runtime` is
-explicit and preserves configuration and sprint state during an update. Standard harnesses require
-an explicit model. Sprint and per-chunk agent-turn budgets default to 30 and 5 and can be set with
-`--max-sprint-iterations` and `--max-chunk-iterations`. Disable a hook explicitly when it is genuinely
-outside the repository's workflow; skipped hooks remain visible in the manifest.
+explicit and preserves configuration and sprint state during an update. Harness, model, sprint turn
+budget, and per-chunk turn budget are operator choices with no defaults. Interactive initialization
+prompts for missing choices; noninteractive callers must pass them explicitly. Disable a hook
+explicitly when it is genuinely outside the repository's workflow; skipped hooks remain visible in
+the manifest.
 
 Upgrade an existing runtime without replacing operator configuration, sprints, logs, or scratchpad
 state. Usually the stored validation configuration makes `upgrade --repo <repository>` sufficient.

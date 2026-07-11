@@ -56,15 +56,19 @@ stateful `.ralph/` runtime.
 
 ### Initialize a new project
 
-After the `npx skills add` command, initialize from the vendored copy:
+After the `npx skills add` command, initialize from the vendored copy. In a terminal, let the
+installer ask for every operator-owned choice:
 
 ```bash
-python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo . --agent codex --model "your model" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo . --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
 ```
 
-The installer creates `.ralph/` with a 30-turn sprint budget and a five-turn per-chunk budget unless
-you pass `--max-sprint-iterations` and `--max-chunk-iterations`. Review those values, the selected
-harness/model, and validation commands before running.
+It asks for the harness, exact model, sprint turn budget, and per-chunk turn budget without proposing
+defaults. For scripts, agents, and other noninteractive callers, pass all four explicitly:
+
+```bash
+python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo . --agent "your harness" --model "your model" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+```
 
 ### Update an existing project
 
@@ -193,8 +197,10 @@ Custom commands receive:
 ## Safety model
 
 Running `.ralph/loop.sh` is the operator's decision to start the autonomous loop; there is no second
-boolean that restates that intent. Before launching, validation requires an available harness,
-explicit model, positive sprint and per-chunk turn budgets, and configured validation commands.
+boolean that restates that intent. Before launching, validation requires an available explicitly
+selected harness, explicit model, positive explicitly selected sprint and per-chunk turn budgets,
+and configured validation commands. Neither installation nor the Bash runtime guesses those
+operator decisions.
 
 The runtime does not auto-commit broadly. A project must set
 `RALPH_AUTO_COMMIT=I_ACCEPT_GIT_ADD_ALL` to deliberately enable broad backup commits; normal agent
