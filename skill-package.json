@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "ralph-workflows",
+  "version_file": "VERSION",
+  "mappings": [
+    {"source": "skill/SKILL.md", "target": "SKILL.md"},
+    {"source": "skill/agents", "target": "agents"},
+    {"source": "skill/references", "target": "references"},
+    {"source": "VERSION", "target": "assets/VERSION"},
+    {"source": "templates", "target": "assets/templates"},
+    {"source": "scripts/ralph.py", "target": "scripts/ralph.py"},
+    {"source": "tests/test_ralph.py", "target": "scripts/test_ralph.py"}
+  ]
+}

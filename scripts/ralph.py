@@ -14,9 +14,11 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent.parent
-TEMPLATES = ROOT / "templates"
+PACKAGE_LAYOUT = (ROOT / "assets" / "templates").is_dir()
+TEMPLATES = ROOT / "assets" / "templates" if PACKAGE_LAYOUT else ROOT / "templates"
+VERSION_FILE = ROOT / "assets" / "VERSION" if PACKAGE_LAYOUT else ROOT / "VERSION"
 SHARED_FILES = {
-    "VERSION": ROOT / "VERSION",
+    "VERSION": VERSION_FILE,
     "format-codex-stream.py": TEMPLATES / "shared" / "format-codex-stream.py",
     "format-stream.py": TEMPLATES / "shared" / "format-stream.py",
     "pretty-process-snapshots.py": TEMPLATES / "shared" / "pretty-process-snapshots.py",
@@ -47,7 +49,7 @@ def sha256(path: Path) -> str:
 
 
 def runtime_version() -> str:
-    return (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    return VERSION_FILE.read_text(encoding="utf-8").strip()
 
 
 def runtime_sources(mode: str) -> dict[str, Path]:
