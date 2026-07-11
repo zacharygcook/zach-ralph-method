@@ -33,11 +33,12 @@ ACTIVE_VALIDATION_LOG=""
 ACTIVE_VALIDATION_PID=""
 ACTIVE_VALIDATION_STARTED=""
 
-missing=$(require_commands bash git jq python3 || true)
+missing=$(require_commands bash git jq || true)
 if [[ -n "$missing" ]]; then
   echo "$missing"
   exit 12
 fi
+PYTHON_BIN=$(find_python) || exit 12
 for budget in "$MAX_SPRINT_ITERATIONS" "$MAX_CHUNK_ITERATIONS"; do
   if [[ ! "$budget" =~ ^[1-9][0-9]*$ ]]; then
     echo "MAX_SPRINT_ITERATIONS and MAX_CHUNK_ITERATIONS must be positive integers"
@@ -474,7 +475,7 @@ start_stream_sidecar() {
 
   if [[ -n "$formatter_path" ]]; then
     (
-      tail -n +1 -f "$LOG_FILE" 2>/dev/null | python3 "$formatter_path"
+      tail -n +1 -f "$LOG_FILE" 2>/dev/null | "$PYTHON_BIN" "$formatter_path"
     ) &
   else
     (

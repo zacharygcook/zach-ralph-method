@@ -8,6 +8,7 @@
     {"source": "skill/references", "target": "references"},
     {"source": "VERSION", "target": "assets/VERSION"},
     {"source": "templates", "target": "assets/templates"},
+    {"source": "scripts/ralph", "target": "scripts/ralph"},
     {"source": "scripts/ralph.py", "target": "scripts/ralph.py"},
     {"source": "tests/test_ralph.py", "target": "scripts/test_ralph.py"}
   ]

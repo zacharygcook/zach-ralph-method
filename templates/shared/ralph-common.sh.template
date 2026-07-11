@@ -129,6 +129,18 @@ require_commands() {
   return "$missing"
 }
 
+find_python() {
+  local candidate
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 11))' 2>/dev/null; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  echo "MISSING_COMMAND:Python 3.11+ (python3 or python)" >&2
+  return 1
+}
+
 run_agent() {
   local agent="${1:-}"
   local prompt_file="${2:-}"

@@ -31,20 +31,21 @@ are routed workflows backed by the references below, not separately required ski
 Vendor this skill into a project with the upstream Skills CLI:
 
 ```bash
-npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy -y
+npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy
 ```
 
 The CLI detects the active coding agent and creates a project-local skill copy containing the
 instructions, installer, and runtime templates. Use `--agent <name>` only to target a specific agent;
 `--agent '*'` deliberately creates adapter copies for every supported client. Run the bundled
-installer from the detected skill directory.
+`scripts/ralph` launcher from the detected skill directory; it selects Python 3.11+ from either the
+`python3` or `python` command.
 
 For a repository that already has `skills-lock.json`, refresh the package before upgrading the
 project runtime:
 
 ```bash
-npx skills@latest update ralph-workflows --project -y
-python3 <skill-dir>/scripts/ralph.py upgrade --repo <repository>
+npx skills@latest update ralph-workflows --project
+<skill-dir>/scripts/ralph upgrade --repo <repository>
 ```
 
 Use `npx skills@latest experimental_install` to restore pinned project skills from a committed
@@ -55,19 +56,19 @@ not run arbitrary lifecycle hooks.
 Install the bundled hardened Bash runtime only when the user asks to initialize or repair Ralph:
 
 ```bash
-python3 <skill-dir>/scripts/ralph.py init --repo <repository> --agent <agent> --model '<model>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
+<skill-dir>/scripts/ralph init --repo <repository> --agent <agent> --model '<model>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
 ```
 
 For a parent directory containing independent child Git repositories, use multi-repo mode:
 
 ```bash
-python3 <skill-dir>/scripts/ralph.py init --repo <parent> --mode multi-repo --repos <repo-a> <repo-b> --primary-repo <repo-a> --agent <agent> --model '<model>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast cross-repo command>' --sprint-validation-command '<full cross-repo command>'
+<skill-dir>/scripts/ralph init --repo <parent> --mode multi-repo --repos <repo-a> <repo-b> --primary-repo <repo-a> --agent <agent> --model '<model>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast cross-repo command>' --sprint-validation-command '<full cross-repo command>'
 ```
 
-Initialization is non-destructive: it refuses an existing `.ralph/` unless `--update-runtime` is
-explicit and preserves configuration and sprint state during an update. Harness, model, sprint turn
-budget, and per-chunk turn budget are operator choices with no defaults. Interactive initialization
-prompts for missing choices; noninteractive callers must pass them explicitly. Disable a hook
+Initialization is non-destructive: when `.ralph/` already exists, `init` enters the same safe upgrade
+path as `upgrade` and preserves configuration and sprint state. Harness, model, sprint turn budget,
+and per-chunk turn budget are operator choices with no defaults. Interactive initialization and
+upgrade prompt for missing choices; noninteractive callers must pass them explicitly. Disable a hook
 explicitly when it is genuinely outside the repository's workflow; skipped hooks remain visible in
 the manifest.
 
@@ -77,14 +78,14 @@ Legacy `RALPH_TEST_COMMAND` values migrate to the sprint gate; if validation con
 supply the commands or explicitly disable the relevant gate:
 
 ```bash
-python3 <skill-dir>/scripts/ralph.py upgrade --repo <repository> --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
+<skill-dir>/scripts/ralph upgrade --repo <repository> --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
 ```
 
 Validate installed runtime, fingerprints, configuration, and sprint structure with:
 
 ```bash
-python3 <skill-dir>/scripts/ralph.py validate --repo <repository>
-python3 <skill-dir>/scripts/ralph.py status --repo <repository>
+<skill-dir>/scripts/ralph validate --repo <repository>
+<skill-dir>/scripts/ralph status --repo <repository>
 ```
 
 Use `--agent custom --agent-command '<command>'` for another client. The trusted command receives

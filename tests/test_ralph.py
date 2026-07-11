@@ -116,6 +116,30 @@ def create_sprint(root: Path, name: str = "1-demo", repo: str | None = None) -> 
 
 
 class RalphRuntimeTest(unittest.TestCase):
+    def test_launcher_supports_python_or_python3_without_documenting_either(self) -> None:
+        launcher = MODULE_PATH.with_name("ralph")
+        with tempfile.TemporaryDirectory() as directory:
+            bin_dir = Path(directory) / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "python").symlink_to(sys.executable)
+            result = run(
+                "/bin/bash",
+                str(launcher),
+                "--help",
+                env={"PATH": str(bin_dir)},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Install, validate, and inspect", result.stdout)
+            common = ralph.TEMPLATES / "shared" / "ralph-common.sh.template"
+            detected = run(
+                "/bin/bash",
+                "-c",
+                f"source {shlex.quote(str(common))}; find_python",
+                env={"PATH": str(bin_dir)},
+            )
+            self.assertEqual(detected.returncode, 0, detected.stderr)
+            self.assertEqual(detected.stdout.strip(), "python")
+
     def test_builtin_harness_adapters_pass_explicit_model_and_current_flags(self) -> None:
         expected_arguments = {
             "claude": ["--dangerously-skip-permissions", "--model", "test-model", "-p"],
@@ -188,7 +212,7 @@ class RalphRuntimeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertGreaterEqual(len(scripts), 7)
 
-    def test_init_records_harness_model_budgets_and_refuses_overwrite(self) -> None:
+    def test_init_records_choices_and_safely_upgrades_an_existing_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory) / "repo with spaces"
             initialize_repo(repo)
@@ -222,7 +246,8 @@ class RalphRuntimeTest(unittest.TestCase):
             )
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertIn("Harness=codex model=test-model", first.stdout)
-            self.assertNotEqual(second.returncode, 0)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertIn("Upgraded Ralph runtime", second.stdout)
             config = ralph.parse_config(repo / ".ralph" / "config.env")
             self.assertEqual(config["RALPH_AGENT_MODEL"], "test-model")
             self.assertEqual(config["MAX_SPRINT_ITERATIONS"], "30")
@@ -295,6 +320,47 @@ class RalphRuntimeTest(unittest.TestCase):
             self.assertNotIn("MAX_ITERATIONS:-30", loop)
             self.assertNotIn("MAX_CHUNK_ITERATIONS:-5", loop)
             self.assertNotIn("RALPH_AGENT:-${AGENT", loop)
+
+    def test_init_existing_runtime_interactively_repairs_missing_choices(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            initialized = run_cli(
+                "init",
+                "--repo",
+                str(repo),
+                "--agent",
+                "codex",
+                "--model",
+                "old-model",
+                *BUDGET_ARGS,
+                "--disable-chunk-validation",
+                "--disable-sprint-validation",
+            )
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            config_path = repo / ".ralph" / "config.env"
+            for key in (
+                "RALPH_AGENT",
+                "RALPH_AGENT_MODEL",
+                "MAX_SPRINT_ITERATIONS",
+                "MAX_CHUNK_ITERATIONS",
+            ):
+                replace_config(config_path, key, "")
+            arguments = ralph.build_parser().parse_args(["init", "--repo", str(repo)])
+            with (
+                mock.patch("sys.stdin.isatty", return_value=True),
+                mock.patch("sys.stdout.isatty", return_value=True),
+                mock.patch(
+                    "builtins.input",
+                    side_effect=["claude", "chosen-model", "12", "3"],
+                ),
+            ):
+                ralph.install(arguments)
+            config = ralph.parse_config(config_path)
+            self.assertEqual(config["RALPH_AGENT"], "claude")
+            self.assertEqual(config["RALPH_AGENT_MODEL"], "chosen-model")
+            self.assertEqual(config["MAX_SPRINT_ITERATIONS"], "12")
+            self.assertEqual(config["MAX_CHUNK_ITERATIONS"], "3")
 
     def test_update_runtime_preserves_config_and_sprints(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

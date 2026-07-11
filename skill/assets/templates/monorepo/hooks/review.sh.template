@@ -14,7 +14,7 @@ if [[ "${RALPH_REVIEW_ENABLED:-true}" != "true" ]]; then
   exit 20
 fi
 
-require_commands git jq python3 || exit 12
+require_commands git jq || exit 12
 MANIFEST="$SPRINT_DIR/manifest.json"
 [[ -f "$MANIFEST" ]] || { echo "Missing manifest: $MANIFEST"; exit 14; }
 

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+
+for python_bin in python3 python; do
+  if command -v "$python_bin" >/dev/null 2>&1 && "$python_bin" -c 'import sys; raise SystemExit(sys.version_info < (3, 11))' 2>/dev/null; then
+    exec "$python_bin" "$SCRIPT_DIR/ralph.py" "$@"
+  fi
+done
+
+echo "Ralph requires Python 3.11 or newer, available as either python3 or python." >&2
+exit 12

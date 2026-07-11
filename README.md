@@ -29,7 +29,7 @@ From the Git repository you want Ralph to manage, vendor the complete private sk
 CLI. Your local GitHub credentials must have access to `zach-ralph-method`:
 
 ```bash
-npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy -y
+npx skills@latest add zacharygcook/zach-ralph-method --skill ralph-workflows --copy
 ```
 
 Confirm the project-local installation:
@@ -48,10 +48,10 @@ Ralph has two deliberately separate layers:
 | Layer | Use | Why |
 | --- | --- | --- |
 | Skill package | `npx skills add`, `update`, `list`, `remove`, and `experimental_install` | Vendor and refresh instructions, scripts, and templates without a manual clone. |
-| Project runtime | Bundled `ralph.py` and `.ralph/loop.sh` | Safely initialize, migrate, validate, inspect, and run repository-owned state. |
+| Project runtime | Bundled `ralph` launcher and `.ralph/loop.sh` | Safely initialize, migrate, validate, inspect, and run repository-owned state. |
 
 `npx skills` is the primary package manager. It intentionally does not execute arbitrary
-post-install hooks, so the bundled Python command remains necessary when creating or migrating the
+post-install hooks, so the bundled `ralph` launcher remains necessary when creating or migrating the
 stateful `.ralph/` runtime.
 
 ### Initialize a new project
@@ -60,27 +60,31 @@ After the `npx skills add` command, initialize from the vendored copy. In a term
 installer ask for every operator-owned choice:
 
 ```bash
-python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo . --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+./.agents/skills/ralph-workflows/scripts/ralph init --repo . --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
 ```
 
 It asks for the harness, exact model, sprint turn budget, and per-chunk turn budget without proposing
 defaults. For scripts, agents, and other noninteractive callers, pass all four explicitly:
 
 ```bash
-python3 .agents/skills/ralph-workflows/scripts/ralph.py init --repo . --agent "your harness" --model "your model" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+./.agents/skills/ralph-workflows/scripts/ralph init --repo . --agent "your harness" --model "your model" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
 ```
+
+The `ralph` launcher accepts either a `python3` or `python` executable backed by Python 3.11 or newer,
+so operator commands do not depend on a platform-specific interpreter name.
 
 ### Update an existing project
 
 Refresh the vendored skill first, then safely migrate its generated runtime:
 
 ```bash
-npx skills@latest update ralph-workflows --project -y
-python3 .agents/skills/ralph-workflows/scripts/ralph.py upgrade --repo .
+npx skills@latest update ralph-workflows --project
+./.agents/skills/ralph-workflows/scripts/ralph upgrade --repo .
 ```
 
-The upgrade preserves configuration, sprints, logs, and scratchpads. A legacy runtime
-without validation gates stops and requests the missing commands instead of guessing them.
+Both `init --repo .` and `upgrade --repo .` detect an existing runtime, preserve configuration,
+sprints, logs, and scratchpads, and interactively request any missing operator choices. A legacy
+runtime without validation gates stops and requests the missing commands instead of guessing them.
 
 ### Restore skills from a committed lockfile
 
@@ -157,7 +161,7 @@ After reviewing `.ralph/config.env`, run:
 Inspect progress at any time with:
 
 ```bash
-python3 .agents/skills/ralph-workflows/scripts/ralph.py status --repo .
+./.agents/skills/ralph-workflows/scripts/ralph status --repo .
 ```
 
 Use `./.ralph/loop.sh --resume` after interruption. Use `--force-hooks` only when intentionally
@@ -230,7 +234,7 @@ python3 -m unittest discover -s tests -v
 The clean-room suite installs and executes disposable monorepo and multi-repo fixtures. GitHub Actions runs it on macOS and Linux with multiple Python versions.
 
 To develop Ralph itself instead of consuming it as a skill, clone this repository and use the
-canonical `scripts/ralph.py`. Normal adopting projects should prefer `npx skills` and the vendored
+canonical `scripts/ralph` launcher. Normal adopting projects should prefer `npx skills` and the vendored
 copy documented above.
 
 ## Documentation

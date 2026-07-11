@@ -15,11 +15,14 @@ class DocumentationContractTest(unittest.TestCase):
         add = "npx skills@latest add"
         update = "npx skills@latest update"
         restore = "npx skills@latest experimental_install"
-        runtime = "python3 .agents/skills/ralph-workflows/scripts/ralph.py"
+        runtime = "./.agents/skills/ralph-workflows/scripts/ralph"
         for command in (add, update, restore, runtime):
             self.assertIn(command, readme)
         self.assertLess(readme.index(add), readme.index(runtime))
         self.assertIn("What `npx skills` manages", readme)
+        self.assertNotIn(" --copy -y", readme)
+        self.assertNotIn(" --project -y", readme)
+        self.assertIn("detect an existing runtime", readme)
 
     def test_quick_start_is_an_actionable_operator_journey(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

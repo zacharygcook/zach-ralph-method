@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MAPPINGS = {
+    ROOT / "scripts" / "ralph": ROOT / "skill" / "scripts" / "ralph",
     ROOT / "scripts" / "ralph.py": ROOT / "skill" / "scripts" / "ralph.py",
     ROOT / "VERSION": ROOT / "skill" / "assets" / "VERSION",
     ROOT / "templates": ROOT / "skill" / "assets" / "templates",

@@ -8,11 +8,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.env"
 source "$SCRIPT_DIR/lib/ralph-common.sh"
 
-missing=$(require_commands jq python3 || true)
+missing=$(require_commands jq || true)
 if [[ -n "$missing" ]]; then
   echo "$missing"
   exit 12
 fi
+PYTHON_BIN=$(find_python) || exit 12
 
 REPOS="${RALPH_REPOS:-}"
 [[ -n "$REPOS" ]] || { echo "RALPH_REPOS is required"; exit 14; }
@@ -78,7 +79,7 @@ if [[ -n "$LATEST_RUN" ]]; then
     LAST_TS=$(echo "$LAST_LINE" | sed -E 's/^\[([^]]+)\].*/\1/' || true)
     if [[ -n "$LAST_TS" ]]; then
       NOW_EPOCH=$(epoch_now)
-      LAST_EPOCH=$(python3 -c 'from datetime import datetime; import sys; print(int(datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).timestamp()))' "$LAST_TS" 2>/dev/null || echo "")
+      LAST_EPOCH=$("$PYTHON_BIN" -c 'from datetime import datetime; import sys; print(int(datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).timestamp()))' "$LAST_TS" 2>/dev/null || echo "")
       if [[ -n "$LAST_EPOCH" ]]; then
         echo "Heartbeat age: $((NOW_EPOCH - LAST_EPOCH))s"
       fi

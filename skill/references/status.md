@@ -16,4 +16,4 @@ Use when users ask whether a sprint is truly complete.
 - Sprint is fully complete only when `manifest.phase == hooks_done`, every accepted chunk has successful validation evidence, and every enabled post-sprint hook
   is done. Explicitly disabled hooks remain visible as `skipped`.
 - If chunks pass but hooks are incomplete, recommend safe rerun: `./.ralph/loop.sh`.
-- Prefer `python3 <skill-dir>/scripts/ralph.py status --repo <repository>` for a portable summary.
+- Prefer `<skill-dir>/scripts/ralph status --repo <repository>` for a portable summary.
