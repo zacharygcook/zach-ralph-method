@@ -179,7 +179,8 @@ class RalphRuntimeTest(unittest.TestCase):
             initialize_repo(root / "web")
             result = run_cli(
                 "init", "--repo", str(root), "--mode", "multi-repo",
-                "--repos", "api", "web", "--disable-tests",
+                "--repos", "api", "web", "--agent", "custom",
+                "--agent-command", "true", "--disable-tests",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             create_sprint(root, repo="api")
