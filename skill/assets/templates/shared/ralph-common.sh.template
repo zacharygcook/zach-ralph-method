@@ -203,6 +203,14 @@ run_agent() {
         (cd "$project_root" && droid exec --auto high --model "$model" --reasoning-effort "$reasoning" -f "$prompt_file")
       fi
       ;;
+    grok)
+      require_commands grok || return 12
+      if [[ "$reasoning" == "inherit" ]]; then
+        (cd "$project_root" && grok --always-approve --model "$model" --prompt-file "$prompt_file" --output-format streaming-json)
+      else
+        (cd "$project_root" && grok --always-approve --model "$model" --reasoning-effort "$reasoning" --prompt-file "$prompt_file" --output-format streaming-json)
+      fi
+      ;;
     *)
       echo "Unknown or missing RALPH_AGENT: ${agent:-none}; configure RALPH_AGENT_COMMAND for another client"
       return 12

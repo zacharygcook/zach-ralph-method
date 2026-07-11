@@ -141,6 +141,25 @@ class RalphRuntimeTest(unittest.TestCase):
         self.assertIn("Reasoning effort suggestions", rendered)
         self.assertIn("5 — balanced", rendered)
 
+    def test_grok_model_discovery_prefers_models_available_to_the_operator(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            grok = Path(directory) / "grok"
+            grok.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' 'Available models:' '  * grok-4.5 (default)' '  - grok-composer-2.5-fast'\n",
+                encoding="utf-8",
+            )
+            grok.chmod(0o755)
+            with mock.patch.dict(
+                os.environ,
+                {"PATH": f"{directory}{os.pathsep}{os.environ['PATH']}"},
+            ):
+                suggestions = ralph.model_suggestions("grok")
+        self.assertEqual(
+            [value for value, _ in suggestions],
+            ["grok-4.5", "grok-composer-2.5-fast"],
+        )
+
     def test_justfile_exposes_short_human_commands_from_project_root(self) -> None:
         just = shutil.which("just")
         if just is None:
@@ -191,6 +210,7 @@ class RalphRuntimeTest(unittest.TestCase):
             "amp": ["--dangerously-allow-all", "--mode", "test-model", "--execute", "--stream-json"],
             "opencode": ["run", "--auto", "--model", "test-model", "--variant", "high", "--format", "json"],
             "droid": ["exec", "--auto", "high", "--model", "test-model", "--reasoning-effort", "high", "-f"],
+            "grok": ["--always-approve", "--model", "test-model", "--reasoning-effort", "high", "--prompt-file", "--output-format", "streaming-json"],
         }
         common = ralph.TEMPLATES / "shared" / "ralph-common.sh.template"
         with tempfile.TemporaryDirectory() as directory:

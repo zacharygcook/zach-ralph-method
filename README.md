@@ -85,7 +85,7 @@ Before the first sprint, have:
 - A Git repository with a known baseline and no unexplained concurrent changes.
 - Node.js/npm with `npx`, plus `just`, for installing and operating the skill.
 - Bash, Git, `jq`, and Python 3 for the generated runtime.
-- A supported coding-agent CLI: Codex, Claude Code, Droid, Amp, OpenCode, or a configured custom command.
+- A supported coding-agent CLI: Codex, Claude Code, Droid, Grok Build, Amp, OpenCode, or a configured custom command.
 - A durable `SPEC.md` (or equivalent source of truth) describing the desired system and boundaries.
 - One fast per-chunk validation command and one comprehensive final validation command. Existing test,
   lint, typecheck, build, and E2E scripts are ideal inputs.
@@ -161,20 +161,20 @@ rerunning completed post-sprint hooks.
 
 ## Supported agent harnesses
 
-The generated runtime supports Claude Code, Codex, Droid, Amp, OpenCode, and a trusted custom
+The generated runtime supports Claude Code, Codex, Droid, Grok Build, Amp, OpenCode, and a trusted custom
 command. Interactive setup offers a short researched model list—including GPT-5.5 and GPT-5.4 for
-Codex—while always accepting another exact value. Droid and OpenCode suggestions use locally
+Codex—while always accepting another exact value. Droid, Grok Build, and OpenCode suggestions use locally
 available models when their CLIs expose them.
 
 | Harness | `RALPH_AGENT_MODEL` meaning |
 | --- | --- |
-| Claude Code, Codex, Droid | Exact value passed through `--model`. |
+| Claude Code, Codex, Droid, Grok Build | Exact value passed through `--model`. |
 | OpenCode | Provider/model value passed through `--model`. |
 | Amp | Amp mode passed through `--mode` (`deep`, `free`, `large`, `rush`, or `smart`). |
 | Custom command | Exported as `RALPH_AGENT_MODEL`; the command owns how to use it. |
 
 Reasoning is explicit too. Ralph maps it to Claude `--effort`, Codex
-`model_reasoning_effort`, Droid `--reasoning-effort`, or OpenCode `--variant`. Choosing `inherit` is
+`model_reasoning_effort`, Droid/Grok Build `--reasoning-effort`, or OpenCode `--variant`. Choosing `inherit` is
 an explicit decision to use that harness's configuration. Amp's selected mode owns its reasoning
 behavior; custom commands receive `RALPH_AGENT_REASONING`.
 

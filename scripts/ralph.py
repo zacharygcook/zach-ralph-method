@@ -37,8 +37,8 @@ MODE_FILES = {
     "prompts/test.md": "prompts/test.md.template",
 }
 MODES = {"monorepo", "multi-repo"}
-AGENTS = {"amp", "claude", "codex", "droid", "opencode", "custom"}
-REASONING_AGENTS = {"claude", "codex", "droid", "opencode"}
+AGENTS = {"amp", "claude", "codex", "droid", "grok", "opencode", "custom"}
+REASONING_AGENTS = {"claude", "codex", "droid", "grok", "opencode"}
 MODEL_SUGGESTIONS: dict[str, tuple[tuple[str, str], ...]] = {
     "codex": (
         ("gpt-5.5", "excellent cost/capability balance"),
@@ -60,6 +60,12 @@ MODEL_SUGGESTIONS: dict[str, tuple[tuple[str, str], ...]] = {
         ("gpt-5.4", "proven general-purpose option"),
         ("gpt-5.3-codex", "coding-specialized option"),
         ("grok-4.5", "strong alternative model family"),
+    ),
+    "grok": (
+        ("grok-4.5", "current default powering Grok Build"),
+        ("grok-composer-2.5-fast", "fast Composer option"),
+        ("grok-4.3", "general reasoning model"),
+        ("grok-build-0.1", "coding-focused API model"),
     ),
     "amp": (
         ("smart", "Amp chooses the model and tools"),
@@ -90,6 +96,13 @@ REASONING_SUGGESTIONS: dict[str, tuple[tuple[str, str], ...]] = {
         ("high", "difficult implementation work"),
         ("low", "faster straightforward chunks when supported"),
         ("xhigh", "very difficult problems when supported"),
+        ("inherit", "explicitly use the selected model's default"),
+    ),
+    "grok": (
+        ("medium", "balanced coding work"),
+        ("high", "difficult debugging or architecture"),
+        ("low", "faster straightforward chunks"),
+        ("none", "no additional reasoning when supported"),
         ("inherit", "explicitly use the selected model's default"),
     ),
     "opencode": (
@@ -139,6 +152,8 @@ def discover_harness_models(agent: str) -> tuple[str, ...]:
             command = ["droid", "exec", "--help"]
         elif agent == "opencode":
             command = ["opencode", "models"]
+        elif agent == "grok":
+            command = ["grok", "models"]
         else:
             return ()
         result = subprocess.run(
@@ -152,6 +167,13 @@ def discover_harness_models(agent: str) -> tuple[str, ...]:
             line.split()[0]
             for line in output.splitlines()
             if line.strip() and "/" in line.split()[0]
+        )
+    if agent == "grok":
+        available = output.partition("Available models:")[2]
+        return tuple(
+            line.lstrip(" *-").split()[0]
+            for line in available.splitlines()
+            if line.lstrip().startswith(("* ", "- "))
         )
     available = output.partition("Available Models:")[2].partition("Model details:")[0]
     return tuple(

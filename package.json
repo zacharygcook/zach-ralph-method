@@ -1,6 +1,6 @@
 {
   "name": "zach-ralph-method",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "private": true,
   "description": "Bootstrap the Ralph workflows skill and its project-local just recipes.",
   "bin": {

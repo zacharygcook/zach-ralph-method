@@ -103,7 +103,7 @@ Validate installed runtime, fingerprints, configuration, and sprint structure wi
 
 Use `--agent custom --agent-command '<command>'` for another client. The trusted command receives
 `RALPH_PROMPT_FILE` and `RALPH_PROJECT_ROOT`. Never place secrets in `config.env`; Bash sources it as
-code. Runtime adapters support Codex, Claude Code, Amp, OpenCode, and Factory Droid, but verify the
+code. Runtime adapters support Codex, Claude Code, Grok Build, Amp, OpenCode, and Factory Droid, but verify the
 installed CLI's current flags before a live autonomous run.
 
 A repository may call the same fast command from its existing pre-commit system for earlier feedback.
