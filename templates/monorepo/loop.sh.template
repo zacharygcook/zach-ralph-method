@@ -510,7 +510,9 @@ if all_chunks_pass_fn; then
   if [[ -n "$NEXT_SPRINT" ]]; then
     offer_next_sprint_prompt "$NEXT_SPRINT"
   else
-    echo "No next sprint found. Create one with /ralph-sprint"
+    echo "No next sprint is prepared."
+    echo 'Ask your coding agent: "Use $ralph-workflows to create the next sprint from SPEC.md, set CURRENT_SPRINT, validate it, and stop before running."'
+    echo "Then run: just run"
   fi
 
   exit 0
@@ -646,7 +648,9 @@ for i in $(seq "$START_ITERATION" "$MAX_SPRINT_ITERATIONS"); do
       if [[ -n "$NEXT_SPRINT" ]]; then
         offer_next_sprint_prompt "$NEXT_SPRINT"
       else
-        echo "No next sprint found. Create one with /ralph-sprint"
+        echo "No next sprint is prepared."
+        echo 'Ask your coding agent: "Use $ralph-workflows to create the next sprint from SPEC.md, set CURRENT_SPRINT, validate it, and stop before running."'
+        echo "Then run: just run"
       fi
 
       trap - EXIT

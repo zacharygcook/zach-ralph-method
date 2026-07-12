@@ -418,6 +418,9 @@ class RalphRuntimeTest(unittest.TestCase):
             self.assertNotIn("MAX_ITERATIONS:-30", loop)
             self.assertNotIn("MAX_CHUNK_ITERATIONS:-5", loop)
             self.assertNotIn("RALPH_AGENT:-${AGENT", loop)
+            self.assertNotIn("/ralph-sprint", loop)
+            self.assertIn("Use $ralph-workflows to create the next sprint", loop)
+            self.assertIn("Then run: just run", loop)
 
     def test_init_existing_runtime_interactively_repairs_missing_choices(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
