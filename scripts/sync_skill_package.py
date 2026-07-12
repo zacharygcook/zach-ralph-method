@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MAPPINGS = (
     (ROOT / "scripts" / "ralph", ROOT / "skills" / "ralph-loop" / "scripts" / "ralph"),
     (ROOT / "scripts" / "ralph.py", ROOT / "skills" / "ralph-loop" / "scripts" / "ralph.py"),
+    (ROOT / "tests" / "test_ralph.py", ROOT / "skills" / "ralph-loop" / "scripts" / "test_ralph.py"),
     (ROOT / "VERSION", ROOT / "skills" / "ralph-loop" / "assets" / "VERSION"),
     (ROOT / "VERSION", ROOT / "skills" / "ralph-sprint" / "assets" / "VERSION"),
     (ROOT / "VERSION", ROOT / "skills" / "ralph-status" / "assets" / "VERSION"),
