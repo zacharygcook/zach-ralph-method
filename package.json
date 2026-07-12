@@ -1,6 +1,6 @@
 {
   "name": "zach-ralph-method",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "Install the Ralph loop skill suite and its project-local just recipes.",
   "bin": {
