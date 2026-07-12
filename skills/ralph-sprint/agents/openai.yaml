@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ralph Sprint"
+  short_description: "Create and validate the next Ralph sprint"
+  default_prompt: "Use $ralph-sprint to create the next dependency-ordered sprint from this repository’s spec, validate it, and stop before execution."

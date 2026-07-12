@@ -7,12 +7,12 @@ blackbird/
 !templates/
 !scripts/
 !bin/
+!skills/
+!skills/**
 !package.json
 !tests/
-!skill/
 !.github/
 !VERSION
-!skill-package.json
 !/CLAUDE.md
 !/AGENTS.md
 !/README.md

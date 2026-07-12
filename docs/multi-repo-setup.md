@@ -25,7 +25,7 @@ npx skills add zacharygcook/zach-ralph-method
 Then initialize the parent runtime from the vendored package:
 
 ```bash
-./.agents/skills/ralph-workflows/scripts/ralph init --repo /path/to/product --mode multi-repo --repos service dashboard mobile --primary-repo service --agent codex --model "your model" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast validation command" --sprint-validation-command "your full validation command"
+./.agents/skills/ralph-loop/scripts/ralph init --repo /path/to/product --mode multi-repo --repos service dashboard mobile --primary-repo service --agent codex --model "your model" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast validation command" --sprint-validation-command "your full validation command"
 ```
 
 The installer verifies every named child contains `.git`, records the topology in `.runtime-manifest.json`, and writes `RALPH_REPOS` plus `RALPH_PRIMARY_REPO` to `config.env`.
@@ -76,9 +76,9 @@ require commit evidence from every configured child repository.
 ## Validate and operate
 
 ```bash
-./.agents/skills/ralph-workflows/scripts/ralph validate --repo /path/to/product
+./.agents/skills/ralph-loop/scripts/ralph validate --repo /path/to/product
 /path/to/product/.ralph/loop.sh
-./.agents/skills/ralph-workflows/scripts/ralph status --repo /path/to/product
+./.agents/skills/ralph-loop/scripts/ralph status --repo /path/to/product
 ```
 
 Status shows each child repository's commit range, hook state, latest events, and heartbeat age using portable Python timestamp parsing on macOS and Linux.

@@ -13,7 +13,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "bin" / "install.mjs"
-IMPORT_LINE = "import '.agents/skills/ralph-workflows/recipes.just'"
+IMPORT_LINE = "import '.agents/skills/ralph-loop/recipes.just'"
+LEGACY_IMPORT_LINE = "import '.agents/skills/ralph-workflows/recipes.just'"
+SKILLS = ("ralph-loop", "ralph-sprint", "ralph-status", "ralph-review")
 
 
 class InstallerTest(unittest.TestCase):
@@ -47,8 +49,16 @@ class InstallerTest(unittest.TestCase):
         fake_npx = fake_bin / "npx"
         fake_npx.write_text(
             "#!/usr/bin/env bash\n"
-            'printf "%s\\n" "$@" > "$CAPTURE"\n'
-            "mkdir -p .agents/skills/ralph-workflows\n",
+            'printf "%s" "$1" >> "$CAPTURE"\n'
+            'shift\n'
+            'printf " %s" "$@" >> "$CAPTURE"\n'
+            'printf "\\n" >> "$CAPTURE"\n'
+            'if [[ "$*" == *" add "* || " $*" == *" skills add "* ]]; then\n'
+            "  mkdir -p .agents/skills/{ralph-loop,ralph-sprint,ralph-status,ralph-review}\n"
+            "fi\n"
+            'if [[ "$*" == *"remove ralph-workflows"* ]]; then\n'
+            "  rm -rf .agents/skills/ralph-workflows\n"
+            "fi\n",
             encoding="utf-8",
         )
         fake_npx.chmod(0o755)
@@ -68,14 +78,14 @@ class InstallerTest(unittest.TestCase):
             text=True,
         )
 
-    def test_installer_uses_bare_skill_command_and_creates_import(self) -> None:
+    def test_installer_selects_the_full_suite_and_creates_import(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
             result = self.run_installer(repo)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
-                (repo / "npx-arguments.txt").read_text(encoding="utf-8").splitlines(),
-                ["skills", "add", "zacharygcook/zach-ralph-method"],
+                (repo / "npx-arguments.txt").read_text(encoding="utf-8").splitlines()[0],
+                "skills add zacharygcook/zach-ralph-method --skill " + " ".join(SKILLS),
             )
             self.assertEqual(
                 (repo / "justfile").read_text(encoding="utf-8"),
@@ -96,6 +106,21 @@ class InstallerTest(unittest.TestCase):
             self.assertIn("test:\n    echo test\n", text)
             self.assertEqual(text.count(IMPORT_LINE), 1)
             self.assertNotIn("justfile", {path.name for path in repo.iterdir()})
+
+    def test_installer_migrates_legacy_skill_and_recipe_import(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            legacy = repo / ".agents" / "skills" / "ralph-workflows"
+            legacy.mkdir(parents=True)
+            (legacy / "SKILL.md").write_text("legacy\n", encoding="utf-8")
+            justfile = repo / "justfile"
+            justfile.write_text(LEGACY_IMPORT_LINE + "\n", encoding="utf-8")
+            result = self.run_installer(repo)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(legacy.exists())
+            self.assertEqual(justfile.read_text(encoding="utf-8"), IMPORT_LINE + "\n")
+            calls = (repo / "npx-arguments.txt").read_text(encoding="utf-8")
+            self.assertIn("skills remove ralph-workflows -y", calls)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ralph Review"
+  short_description: "Review a Ralph sprint against its spec"
+  default_prompt: "Use $ralph-review to assess the current or completed Ralph sprint for spec alignment, evidence, and remaining gaps."

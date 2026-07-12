@@ -53,4 +53,4 @@ into a shared parent containing two or more independent child Git repositories a
    - `bash`, `git`, `jq`, and Python 3 are present
    - multi-repo chunks name a configured repository or `all`, and each repository keeps an independent commit boundary
 
-Vendor a new package with `npx skills add zacharygcook/zach-ralph-method`, or refresh a locked package with `npx skills update ralph-workflows --project`. Then use the vendored `scripts/ralph` launcher to initialize or upgrade the stateful project runtime and run `validate` before live execution. In multi-repo mode, ensure project-supplied validation commands cover contracts that cross repository boundaries.
+Vendor the suite with `npx zacharygcook/zach-ralph-method`, or refresh a locked package with `npx skills update ralph-loop ralph-sprint ralph-status ralph-review --project`. Then use the `ralph-loop` launcher to initialize or upgrade the stateful project runtime and run `validate` before live execution. In multi-repo mode, ensure project-supplied validation commands cover contracts that cross repository boundaries.

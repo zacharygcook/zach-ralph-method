@@ -14,7 +14,7 @@ class DocumentationContractTest(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         add = "npx zacharygcook/zach-ralph-method"
         restore = "npx skills experimental_install"
-        runtime = "./.agents/skills/ralph-workflows/scripts/ralph"
+        runtime = "./.agents/skills/ralph-loop/scripts/ralph"
         for command in (add, restore, runtime):
             self.assertIn(command, readme)
         self.assertLess(readme.index(add), readme.index(runtime))
@@ -37,7 +37,7 @@ class DocumentationContractTest(unittest.TestCase):
         )[0]
         for prerequisite in ("Python 3", "jq", "SPEC.md", "validation command"):
             self.assertIn(prerequisite, quick_start)
-        self.assertIn("Use $ralph-workflows to preflight", quick_start)
+        self.assertIn("Use $ralph-loop to preflight", quick_start)
         self.assertIn("You do **not** manually create `.ralph/`", quick_start)
         self.assertIn("exact model", quick_start)
         self.assertIn("reasoning effort", quick_start)
@@ -45,17 +45,27 @@ class DocumentationContractTest(unittest.TestCase):
         self.assertIn("maximum sprint turns", quick_start)
         self.assertIn("per-chunk turn budget", quick_start)
         self.assertIn("just run", quick_start)
-        self.assertIn("Which workflow should I ask for?", quick_start)
+        self.assertIn("Which skill should I use?", quick_start)
+        for name in ("$ralph-loop", "$ralph-sprint", "$ralph-status", "$ralph-review"):
+            self.assertIn(name, quick_start)
 
     def test_skill_explains_package_and_runtime_boundary(self) -> None:
-        skill = (ROOT / "skill" / "SKILL.md").read_text(encoding="utf-8")
+        skill_root = ROOT / "skills" / "ralph-loop"
+        skill = (skill_root / "SKILL.md").read_text(encoding="utf-8")
         normalized = " ".join(skill.split())
         self.assertIn("just upgrade", skill)
         self.assertIn("does not run arbitrary lifecycle hooks", normalized)
         self.assertIn("Do not ask the operator to hand-build `.ralph/`", skill)
-        self.assertTrue((ROOT / "skill" / "references" / "first-run.md").is_file())
-        self.assertTrue((ROOT / "skill" / "justfile").is_file())
-        self.assertTrue((ROOT / "skill" / "recipes.just").is_file())
+        self.assertTrue((skill_root / "references" / "first-run.md").is_file())
+        self.assertTrue((skill_root / "justfile").is_file())
+        self.assertTrue((skill_root / "recipes.just").is_file())
+
+    def test_repository_exposes_four_focused_skills(self) -> None:
+        for name in ("ralph-loop", "ralph-sprint", "ralph-status", "ralph-review"):
+            root = ROOT / "skills" / name
+            self.assertTrue((root / "SKILL.md").is_file())
+            self.assertTrue((root / "agents" / "openai.yaml").is_file())
+            self.assertTrue((root / "skill-package.json").is_file())
 
 
 if __name__ == "__main__":

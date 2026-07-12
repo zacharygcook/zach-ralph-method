@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build or verify the self-contained Skills CLI package in ``skill/``."""
+"""Build or verify the self-contained Ralph skill suite under ``skills/``."""
 
 from __future__ import annotations
 
@@ -11,12 +11,15 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-MAPPINGS = {
-    ROOT / "scripts" / "ralph": ROOT / "skill" / "scripts" / "ralph",
-    ROOT / "scripts" / "ralph.py": ROOT / "skill" / "scripts" / "ralph.py",
-    ROOT / "VERSION": ROOT / "skill" / "assets" / "VERSION",
-    ROOT / "templates": ROOT / "skill" / "assets" / "templates",
-}
+MAPPINGS = (
+    (ROOT / "scripts" / "ralph", ROOT / "skills" / "ralph-loop" / "scripts" / "ralph"),
+    (ROOT / "scripts" / "ralph.py", ROOT / "skills" / "ralph-loop" / "scripts" / "ralph.py"),
+    (ROOT / "VERSION", ROOT / "skills" / "ralph-loop" / "assets" / "VERSION"),
+    (ROOT / "VERSION", ROOT / "skills" / "ralph-sprint" / "assets" / "VERSION"),
+    (ROOT / "VERSION", ROOT / "skills" / "ralph-status" / "assets" / "VERSION"),
+    (ROOT / "VERSION", ROOT / "skills" / "ralph-review" / "assets" / "VERSION"),
+    (ROOT / "templates", ROOT / "skills" / "ralph-loop" / "assets" / "templates"),
+)
 
 
 def paths_match(source: Path, destination: Path) -> bool:
@@ -38,7 +41,7 @@ def paths_match(source: Path, destination: Path) -> bool:
 
 
 def sync() -> None:
-    for source, destination in MAPPINGS.items():
+    for source, destination in MAPPINGS:
         if destination.exists():
             if destination.is_dir():
                 shutil.rmtree(destination)
@@ -63,7 +66,7 @@ def main() -> int:
         sync()
     stale = [
         str(destination.relative_to(ROOT))
-        for source, destination in MAPPINGS.items()
+        for source, destination in MAPPINGS
         if not paths_match(source, destination)
     ]
     if stale:

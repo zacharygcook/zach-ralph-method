@@ -1,4 +1,0 @@
-interface:
-  display_name: "Ralph Workflows"
-  short_description: "Prepare and run resumable coding sprints"
-  default_prompt: "Use $ralph-workflows to preflight this repository, prepare the first safe sprint from its spec, and stop before unattended execution."

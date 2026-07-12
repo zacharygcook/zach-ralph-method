@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "ralph-loop",
+  "version_file": "assets/VERSION",
+  "mappings": [
+    {"source": "SKILL.md", "target": "SKILL.md"},
+    {"source": "agents", "target": "agents"},
+    {"source": "references", "target": "references"},
+    {"source": "justfile", "target": "justfile"},
+    {"source": "recipes.just", "target": "recipes.just"},
+    {"source": "assets", "target": "assets"},
+    {"source": "scripts", "target": "scripts"}
+  ]
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ralph Loop"
+  short_description: "Prepare and run resumable coding sprints"
+  default_prompt: "Use $ralph-loop to preflight this repository, prepare the first safe sprint from its spec, and stop before unattended execution."

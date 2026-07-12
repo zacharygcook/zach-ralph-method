@@ -1,9 +1,9 @@
 ---
-name: ralph-workflows
+name: ralph-loop
 description: Initialize, plan, run, inspect, and review resumable Ralph-style autonomous implementation loops with sequential chunks, persistent scratchpad memory, manifests, and idempotent post-sprint hooks. Use for `.ralph` orchestration or similar long-running coding-agent sprint systems.
 ---
 
-# Ralph Workflows
+# Ralph Loop
 
 Operate an autonomous implementation loop as a resumable state machine, not a one-shot prompt. Preserve negative knowledge, make progress machine-readable, and distinguish completed implementation chunks from completed review/documentation/test hooks.
 
@@ -23,9 +23,9 @@ When a user asks how to start, preflight the repository instead of explaining sp
 5. Tell the operator what to review and stop before running. Invoking `.ralph/loop.sh` starts the
    autonomous loop; do not add or require a redundant authorization boolean.
 
-Do not ask the operator to hand-build `.ralph/` or sprint files. This package exposes one skill,
-`$ralph-workflows`; initialization, spec breakdown, sprint creation, chunk design, status, and review
-are routed workflows backed by the references below, not separately required skill installations.
+Do not ask the operator to hand-build `.ralph/` or sprint files. Use `$ralph-loop` for the complete
+lifecycle or ambiguous Ralph requests. Prefer `$ralph-sprint`, `$ralph-status`, or `$ralph-review`
+when the requested operation is already clear; all four skills share this runtime and its invariants.
 
 ## Deterministic runtime
 
@@ -35,8 +35,8 @@ Bootstrap the human interface from the project repository:
 npx zacharygcook/zach-ralph-method
 ```
 
-The installer delegates to the upstream Skills CLI, which discovers this repository's single skill,
-then safely adds the versioned recipe import to a new or existing project `justfile`. For agent-owned
+The installer delegates to the upstream Skills CLI, installs all four Ralph skills, then safely adds
+the versioned recipe import to a new or existing project `justfile`. For agent-owned
 or noninteractive package management, the underlying command is:
 
 ```bash
@@ -57,7 +57,7 @@ For a repository that already has `skills-lock.json`, refresh the package before
 project runtime:
 
 ```bash
-npx skills update ralph-workflows --project
+npx skills update ralph-loop ralph-sprint ralph-status ralph-review --project
 <skill-dir>/scripts/ralph upgrade --repo <repository>
 ```
 

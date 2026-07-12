@@ -1,7 +1,7 @@
 set shell := ["bash", "-uc"]
 
 repo := justfile_directory()
-ralph := repo / ".agents/skills/ralph-workflows/scripts/ralph"
+ralph := repo / ".agents/skills/ralph-loop/scripts/ralph"
 
 [default]
 [doc('Show Ralph commands')]
@@ -14,7 +14,7 @@ init:
 
 [doc('Update the skill and safely upgrade the runtime')]
 upgrade:
-    npx skills update ralph-workflows --project
+    npx skills update ralph-loop ralph-sprint ralph-status ralph-review --project
     "{{ ralph }}" upgrade --repo "{{ repo }}"
 
 [doc('Validate runtime, configuration, and sprint state')]

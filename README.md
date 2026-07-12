@@ -40,8 +40,8 @@ From the Git repository you want Ralph to manage:
 npx zacharygcook/zach-ralph-method
 ```
 
-The installer vendors the repository's single skill and safely adds its recipes to an existing or
-new project `justfile`. Then initialize interactively:
+The installer vendors the four-skill Ralph suite and safely adds `ralph-loop` recipes to an existing
+or new project `justfile`. Then initialize interactively:
 
 ```bash
 just init
@@ -93,16 +93,17 @@ Before the first sprint, have:
 On Windows, run the Bash runtime in a compatible environment such as WSL. If the repository does
 not have a useful spec or validation commands yet, create those before starting a loop.
 
-### 2. Ask the skill to prepare the first sprint
+### 2. Ask Ralph Loop to prepare the first sprint
 
-This repository ships one operator-facing skill: `$ralph-workflows`. The initialization, spec
-breakdown, sprint creation, chunk planning, status, and review workflows are bundled references—not
-separate skills you need to install or memorize.
+This repository installs four focused entry points. Use `$ralph-loop` for setup or the complete
+lifecycle, `$ralph-sprint` to prepare a sprint, `$ralph-status` to inspect progress, and
+`$ralph-review` to assess completed work. Some clients display installed skills with a `/` prefix;
+the skill names are the same.
 
 Ask your coding agent:
 
 ```text
-Use $ralph-workflows to preflight this repository for a Ralph loop. Read SPEC.md and the repository's
+Use $ralph-loop to preflight this repository for a Ralph loop. Read SPEC.md and the repository's
 agent instructions. Identify the fast chunk-validation command and comprehensive sprint-validation
 command. Confirm the harness, exact model, reasoning effort, maximum sprint turns, and maximum turns
 per chunk with me.
@@ -121,7 +122,7 @@ Inspect the proposed sprint, especially its goal, chunk order, artifacts, accept
 validation commands. To ask the skill for a readiness check:
 
 ```text
-Use $ralph-workflows to inspect the current Ralph sprint and tell me whether it is safe and complete
+Use $ralph-review to inspect the current Ralph sprint and tell me whether it is safe and complete
 enough to run. Confirm the configured harness, model, reasoning effort, sprint turn budget, and
 per-chunk turn budget.
 Do not start the loop.
@@ -148,16 +149,14 @@ just status
 Use `just resume` after interruption. Use the automation interface below only when intentionally
 rerunning completed post-sprint hooks.
 
-### Which workflow should I ask for?
+### Which skill should I use?
 
-| Goal | Ask `$ralph-workflows` to… |
+| Skill | Use it for |
 | --- | --- |
-| First use | Preflight prerequisites, initialize `.ralph`, plan sprints, and create the first sprint without arming it. |
-| Existing installation | Update/upgrade safely, validate fingerprints and configuration, and preserve sprint state. |
-| New or changed spec | Break the spec into dependency-ordered sprints and prepare only the next sprint. |
-| Sprint design | Create or validate the sprint files, chunks, acceptance criteria, artifacts, and scratchpad. |
-| Progress check | Report real status from chunks, manifest phase, hooks, markers, and logs. |
-| Completion review | Check spec alignment and confirm that implementation plus required hooks actually finished. |
+| `$ralph-loop` | First use, runtime setup/upgrades, complete lifecycle work, and ambiguous Ralph requests. |
+| `$ralph-sprint` | Break down a new or changed spec and prepare exactly the next sprint without running it. |
+| `$ralph-status` | Report real progress from chunks, manifests, hooks, markers, commits, and logs. |
+| `$ralph-review` | Check spec alignment and confirm that implementation plus required hooks actually finished. |
 
 ## Supported agent harnesses
 
@@ -218,9 +217,9 @@ pre-commit hook for earlier feedback, but Ralph's independent gate remains autho
 Agents and scripts can bypass the interactive recipes by passing every decision explicitly:
 
 ```bash
-./.agents/skills/ralph-workflows/scripts/ralph init --repo . --agent "your harness" --model "your model" --reasoning-effort "your reasoning" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
-./.agents/skills/ralph-workflows/scripts/ralph upgrade --repo .
-./.agents/skills/ralph-workflows/scripts/ralph validate --repo .
+./.agents/skills/ralph-loop/scripts/ralph init --repo . --agent "your harness" --model "your model" --reasoning-effort "your reasoning" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+./.agents/skills/ralph-loop/scripts/ralph upgrade --repo .
+./.agents/skills/ralph-loop/scripts/ralph validate --repo .
 ./.ralph/loop.sh --resume
 ./.ralph/loop.sh --force-hooks
 ```

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Ralph Wiggum Loop - Autonomous Agent Runner
+# Ralph Wiggum Loop - Autonomous Agent Runner (Multi-Repo Mode)
+# Orchestrates work across multiple repositories
 
 set -euo pipefail
 
@@ -7,13 +8,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.env"
 source "$SCRIPT_DIR/lib/ralph-common.sh"
 
+# Project root is parent of .ralph/
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 MAX_SPRINT_ITERATIONS="${MAX_SPRINT_ITERATIONS:-}"
 MAX_CHUNK_ITERATIONS="${MAX_CHUNK_ITERATIONS:-}"
 AGENT="${RALPH_AGENT:-}"
 MODEL="${RALPH_AGENT_MODEL:-}"
 REASONING="${RALPH_AGENT_REASONING:-}"
 CURRENT_SPRINT="${CURRENT_SPRINT:-}"
+REPOS="${RALPH_REPOS:-${REPOS:-api frontend}}"
+PRIMARY_REPO="${RALPH_PRIMARY_REPO:-${PRIMARY_REPO:-api}}"
 HEARTBEAT_SEC="${HEARTBEAT_SEC:-30}"
 AGENT_IDLE_TIMEOUT_SEC="${AGENT_IDLE_TIMEOUT_SEC:-0}"
 POST_RESULT_IDLE_SEC="${POST_RESULT_IDLE_SEC:-45}"
@@ -65,6 +70,7 @@ if [[ "$CHUNK_VALIDATION_ENABLED" == "true" && -z "$CHUNK_VALIDATION_COMMAND" ]]
   exit 12
 fi
 
+# ── CLI Flags ──────────────────────────────────────────────
 RESUME=false
 FORCE_HOOKS=false
 for arg in "$@"; do
@@ -79,6 +85,7 @@ for arg in "$@"; do
   esac
 done
 
+# ── Sprint Validation ─────────────────────────────────────
 SPRINT_DIR="$SCRIPT_DIR/sprints/$CURRENT_SPRINT"
 PROMPT_FILE="$SPRINT_DIR/prompt.md"
 CHUNKS_FILE="$SPRINT_DIR/chunks.json"
@@ -90,11 +97,24 @@ if [[ -z "$CURRENT_SPRINT" ]] || [[ ! -d "$SPRINT_DIR" ]]; then
   exit 1
 fi
 
+# Validate repos exist
+for repo in $REPOS; do
+  if [[ ! "$repo" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Error: Invalid repository directory name: $repo"
+    exit 14
+  fi
+  REPO_PATH="$PROJECT_ROOT/$repo"
+  if [[ ! -e "$REPO_PATH/.git" ]]; then
+    echo "Error: Repo not found or not a git repo: $REPO_PATH"
+    exit 1
+  fi
+done
+
+# ── Run Setup ──────────────────────────────────────────────
 RUN_ID=$(date +%Y%m%d-%H%M%S)
 LOG_DIR="$SCRIPT_DIR/logs/$CURRENT_SPRINT/run-$RUN_ID"
 mkdir -p "$LOG_DIR"
 
-START_COMMIT=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")
 START_TIME=$(now_iso)
 ORCHESTRATOR_LOG="$LOG_DIR/orchestrator.log"
 EVENT_LOG="$LOG_DIR/events.jsonl"
@@ -110,16 +130,83 @@ log_event() {
   append_event "$EVENT_LOG" "$1" "$2" "$3"
 }
 
-if [[ ! -f "$MANIFEST_FILE" ]] || ! jq -e '.start_commit' "$MANIFEST_FILE" >/dev/null 2>&1; then
+# ── Multi-Repo Helpers ─────────────────────────────────────
+get_repo_commit() {
+  local repo="$1"
+  git -C "$PROJECT_ROOT/$repo" rev-parse HEAD 2>/dev/null || echo "unknown"
+}
+
+backup_commit_all_repos() {
+  local msg="$1"
+  if [[ "${RALPH_AUTO_COMMIT:-false}" == "true" ]]; then
+    echo "Refusing RALPH_AUTO_COMMIT=true; use RALPH_AUTO_COMMIT=I_ACCEPT_GIT_ADD_ALL to acknowledge broad staging"
+    return 14
+  fi
+  [[ "${RALPH_AUTO_COMMIT:-false}" == "I_ACCEPT_GIT_ADD_ALL" ]] || return 0
+  for repo in $REPOS; do
+    git -C "$PROJECT_ROOT/$repo" add -A
+    git -C "$PROJECT_ROOT/$repo" commit -m "$msg" -q 2>/dev/null || true
+  done
+}
+
+get_all_repo_commits() {
+  local result="{"
+  local first=true
+  for repo in $REPOS; do
+    local commit
+    commit=$(get_repo_commit "$repo")
+    if [[ "$first" == "true" ]]; then
+      first=false
+    else
+      result+=","
+    fi
+    result+="\"$repo\":\"$commit\""
+  done
+  result+="}"
+  echo "$result"
+}
+
+finalize_manifest_repos() {
+  local end_time
+  end_time=$(now_iso)
+  for repo in $REPOS; do
+    local end_commit
+    end_commit=$(get_repo_commit "$repo")
+    manifest_update \
+      --arg repo "$repo" --arg commit "$end_commit" \
+      '.repos[$repo].end_commit = $commit' || true
+  done
+  manifest_update \
+    --arg time "$end_time" \
+    '.completed_at = $time | .phase = "chunks_done"' || true
+  log_orchestrator "manifest_updated: phase=chunks_done"
+  log_event "manifest" "ok" "phase=chunks_done"
+}
+
+# ── Manifest Initialization ───────────────────────────────
+if [[ ! -f "$MANIFEST_FILE" ]] || ! jq -e '.repos' "$MANIFEST_FILE" >/dev/null 2>&1; then
+  # Build repos object with start commits
+  REPOS_JSON="{"
+  first=true
+  for repo in $REPOS; do
+    START_COMMIT=$(get_repo_commit "$repo")
+    if [[ "$first" == "true" ]]; then
+      first=false
+    else
+      REPOS_JSON+=","
+    fi
+    REPOS_JSON+="\"$repo\":{\"start_commit\":\"$START_COMMIT\",\"end_commit\":null}"
+  done
+  REPOS_JSON+="}"
+
   cat > "$MANIFEST_FILE" <<EOF_MANIFEST
 {
   "sprint": "$CURRENT_SPRINT",
-  "start_commit": "$START_COMMIT",
   "started_at": "$START_TIME",
-  "end_commit": null,
   "completed_at": null,
   "iterations": 0,
   "agent_turns": [],
+  "repos": $REPOS_JSON,
   "commits": [],
   "validation": {"chunk_attempts": []},
   "phase": "running",
@@ -132,6 +219,7 @@ if [[ ! -f "$MANIFEST_FILE" ]] || ! jq -e '.start_commit' "$MANIFEST_FILE" >/dev
 EOF_MANIFEST
 fi
 
+# Normalize manifest schema for older manifests
 ensure_manifest_schema() {
   manifest_update_locked "$MANIFEST_FILE" '
     .phase = (.phase // "running")
@@ -146,7 +234,7 @@ ensure_manifest_schema() {
     | .hooks.validation.phases = (.hooks.validation.phases // {"sprint":{"status":"pending"},"e2e":{"status":"pending"}})
     | del(.hooks.tests)
   ' || {
-    log_orchestrator "ERROR: Failed to normalize manifest schema: $MANIFEST_FILE"
+    log_orchestrator "ERROR: Failed to normalize manifest schema"
     return 1
   }
 }
@@ -158,39 +246,7 @@ manifest_update() {
   }
 }
 
-finalize_manifest_chunks_done() {
-  local end_commit end_time
-  end_commit=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")
-  end_time=$(now_iso)
-  manifest_update \
-    --arg end "$end_commit" --arg time "$end_time" \
-    '.end_commit = ($end // .end_commit)
-      | .completed_at = ($time // .completed_at)
-      | .phase = "chunks_done"' || return 1
-  log_orchestrator "manifest_updated: end_commit=$end_commit completed_at=$end_time phase=chunks_done"
-  log_event "manifest" "ok" "phase=chunks_done"
-}
-
-hooks_completed() {
-  [[ "$(jq -r '.phase // ""' "$MANIFEST_FILE" 2>/dev/null || echo "")" == "hooks_done" ]]
-}
-
-mark_hooks_phase_done() {
-  local now
-  now=$(now_iso)
-  manifest_update \
-    --arg now "$now" \
-    '.phase = "hooks_done"
-      | .hooks.review.status = (if .hooks.review.status == "done" then "done" else .hooks.review.status end)
-      | .hooks.documentation.status = (if .hooks.documentation.status == "done" then "done" else .hooks.documentation.status end)
-      | .hooks.validation.status = (if .hooks.validation.status == "done" then "done" else .hooks.validation.status end)
-      | .hooks.review.completed_at = (if .hooks.review.status == "done" and .hooks.review.completed_at == null then $now else .hooks.review.completed_at end)
-      | .hooks.documentation.completed_at = (if .hooks.documentation.status == "done" and .hooks.documentation.completed_at == null then $now else .hooks.documentation.completed_at end)
-      | .hooks.validation.completed_at = (if .hooks.validation.status == "done" and .hooks.validation.completed_at == null then $now else .hooks.validation.completed_at end)' || return 1
-  log_orchestrator "manifest_updated: phase=hooks_done"
-  log_event "manifest" "ok" "phase=hooks_done"
-}
-
+# ── Chunk State ────────────────────────────────────────────
 all_chunks_pass_fn() {
   all_chunks_pass "$CHUNKS_FILE"
 }
@@ -220,24 +276,46 @@ record_agent_turn() {
 }
 
 reset_chunk_pass() {
-  local chunk_id="$1"
-  local tmp="${CHUNKS_FILE}.tmp"
+  local chunk_id tmp
+  chunk_id="$1"
+  tmp="${CHUNKS_FILE}.tmp"
   jq --argjson id "$chunk_id" '(.chunks[] | select(.id == $id) | .passes) = false' "$CHUNKS_FILE" > "$tmp"
   mv "$tmp" "$CHUNKS_FILE"
 }
 
+chunk_owner() {
+  local chunk_id="$1"
+  jq -r --argjson id "$chunk_id" '.chunks[] | select(.id == $id) | .repo' "$CHUNKS_FILE"
+}
+
+repos_have_commit_evidence() {
+  local chunk_id before after owner repo
+  chunk_id="$1"
+  before="$2"
+  after="$3"
+  owner=$(chunk_owner "$chunk_id")
+  if [[ "$owner" == "all" || "$owner" == "both" ]]; then
+    for repo in $REPOS; do
+      jq -ne --arg repo "$repo" --argjson before "$before" --argjson after "$after" '$before[$repo] != $after[$repo]' >/dev/null || return 1
+    done
+    return 0
+  fi
+  jq -ne --arg repo "$owner" --argjson before "$before" --argjson after "$after" '$before[$repo] != $after[$repo]' >/dev/null
+}
+
 record_chunk_validation() {
   local chunk_id="$1" iteration="$2" status="$3" exit_code="$4" started_at="$5" completed_at="$6" log_path="$7"
-  manifest_update \
-    --argjson chunk "$chunk_id" --argjson iter "$iteration" --arg status "$status" \
+  manifest_update --argjson chunk "$chunk_id" --argjson iter "$iteration" --arg status "$status" \
     --argjson exit "$exit_code" --arg started "$started_at" --arg completed "$completed_at" --arg log "$log_path" \
     '.validation.chunk_attempts += [{chunk_id:$chunk,iteration:$iter,status:$status,exit_code:$exit,started_at:$started,completed_at:$completed,log:$log}]' || true
 }
 
 run_chunk_validation() {
-  local chunk_id="$1" iteration="$2"
-  local validation_log="$LOG_DIR/chunk-${chunk_id}-validation-${iteration}.log"
+  local chunk_id iteration validation_log
   local started_at completed_at validation_pid validation_exit=0 validation_status
+  chunk_id="$1"
+  iteration="$2"
+  validation_log="$LOG_DIR/chunk-${chunk_id}-validation-${iteration}.log"
   started_at=$(now_iso)
   ACTIVE_VALIDATION_CHUNK="$chunk_id"
   ACTIVE_VALIDATION_ITERATION="$iteration"
@@ -245,23 +323,15 @@ run_chunk_validation() {
   ACTIVE_VALIDATION_STARTED="$started_at"
   log_orchestrator "chunk_validation_started: chunk=$chunk_id iteration=$iteration log=$validation_log"
   log_event "chunk_validation" "running" "chunk=$chunk_id iteration=$iteration"
-
   (cd "$PROJECT_ROOT" && bash -lc "$CHUNK_VALIDATION_COMMAND") >"$validation_log" 2>&1 &
   validation_pid=$!
   ACTIVE_VALIDATION_PID="$validation_pid"
   monitor_process_with_heartbeat "$validation_pid" "chunk validation=$chunk_id" "$validation_log" \
     "$VALIDATION_HEARTBEAT_SEC" "$VALIDATION_IDLE_TIMEOUT_SEC" "$EVENT_LOG" || validation_exit=$?
   completed_at=$(now_iso)
-
-  if [[ "$validation_exit" -eq 0 ]]; then
-    validation_status="passed"
-    log_orchestrator "chunk_validation_passed: chunk=$chunk_id iteration=$iteration"
-    log_event "chunk_validation" "passed" "chunk=$chunk_id iteration=$iteration"
-  else
-    validation_status="failed"
-    log_orchestrator "chunk_validation_failed: chunk=$chunk_id iteration=$iteration exit=$validation_exit log=$validation_log"
-    log_event "chunk_validation" "failed" "chunk=$chunk_id iteration=$iteration exit=$validation_exit"
-  fi
+  if [[ "$validation_exit" -eq 0 ]]; then validation_status="passed"; else validation_status="failed"; fi
+  log_orchestrator "chunk_validation_${validation_status}: chunk=$chunk_id iteration=$iteration exit=$validation_exit"
+  log_event "chunk_validation" "$validation_status" "chunk=$chunk_id iteration=$iteration exit=$validation_exit"
   record_chunk_validation "$chunk_id" "$iteration" "$validation_status" "$validation_exit" "$started_at" "$completed_at" "$validation_log"
   ACTIVE_VALIDATION_CHUNK=""; ACTIVE_VALIDATION_ITERATION=""; ACTIVE_VALIDATION_LOG=""; ACTIVE_VALIDATION_PID=""; ACTIVE_VALIDATION_STARTED=""
   return "$validation_exit"
@@ -270,11 +340,8 @@ run_chunk_validation() {
 record_validation_feedback() {
   local chunk_id="$1" iteration="$2" reason="$3" log_path="$4"
   {
-    echo ""
-    echo "## Ralph validation feedback — chunk $chunk_id, iteration $iteration"
-    echo ""
-    echo "- Result: $reason"
-    echo "- Log: \`$log_path\`"
+    echo ""; echo "## Ralph validation feedback — chunk $chunk_id, iteration $iteration"; echo ""
+    echo "- Result: $reason"; echo "- Log: \`$log_path\`"
     echo "- The chunk was reset to \`passes: false\`; inspect the log and repair before claiming completion again."
   } >> "$SPRINT_DIR/SCRATCHPAD.md"
 }
@@ -295,6 +362,7 @@ handle_loop_signal() {
   exit "$exit_code"
 }
 
+# ── Next Sprint ────────────────────────────────────────────
 get_next_sprint() {
   local current_num next_num candidate
   current_num=$(echo "$CURRENT_SPRINT" | grep -oE '^[0-9]+' || echo "")
@@ -330,6 +398,19 @@ offer_next_sprint_prompt() {
   fi
 }
 
+# ── Post-Sprint Hooks ─────────────────────────────────────
+hooks_completed() {
+  [[ "$(jq -r '.phase // ""' "$MANIFEST_FILE" 2>/dev/null || echo "")" == "hooks_done" ]]
+}
+
+mark_hooks_phase_done() {
+  local now
+  now=$(now_iso)
+  manifest_update --arg now "$now" '.phase = "hooks_done"' || return 1
+  log_orchestrator "manifest_updated: phase=hooks_done"
+  log_event "manifest" "ok" "phase=hooks_done"
+}
+
 run_post_sprint_hooks() {
   if [[ ! -x "$SCRIPT_DIR/hooks/post-sprint.sh" ]]; then
     log_orchestrator "hooks_missing: $SCRIPT_DIR/hooks/post-sprint.sh"
@@ -350,6 +431,7 @@ run_post_sprint_hooks() {
   fi
 }
 
+# ── Reconciliation ─────────────────────────────────────────
 RECONCILIATION_DONE=false
 reconcile_completion_state() {
   if [[ "$RECONCILIATION_DONE" == "true" ]]; then
@@ -365,8 +447,8 @@ reconcile_completion_state() {
     return 0
   fi
 
-  if [[ "$(jq -r '.end_commit // "null"' "$MANIFEST_FILE" 2>/dev/null || echo "null")" == "null" ]]; then
-    finalize_manifest_chunks_done || true
+  if [[ "$(jq -r '.completed_at // "null"' "$MANIFEST_FILE" 2>/dev/null || echo "null")" == "null" ]]; then
+    finalize_manifest_repos || true
   fi
 
   if hooks_completed && [[ "$FORCE_HOOKS" != "true" ]]; then
@@ -386,10 +468,12 @@ reconcile_completion_state() {
   return 14
 }
 
+# ── Signal Traps ───────────────────────────────────────────
 trap 'handle_loop_signal INT 130' INT
 trap 'handle_loop_signal TERM 143' TERM
 trap 'reconcile_completion_state' EXIT
 
+# ── Agent Commands ─────────────────────────────────────────
 start_stream_sidecar() {
   local formatter_path="${1:-}"
   touch "$LOG_FILE"
@@ -485,16 +569,20 @@ run_agent_with_watchdog() {
   return "$agent_exit"
 }
 
-echo "Starting Ralph loop: agent=$AGENT, model=${MODEL:-custom-command}, reasoning=${REASONING:-harness-owned}"
+# ── Main Loop ──────────────────────────────────────────────
+echo "Starting Ralph loop (multi-repo): agent=$AGENT, model=${MODEL:-custom-command}, reasoning=${REASONING:-harness-owned}"
 echo "Turn budgets: sprint=$MAX_SPRINT_ITERATIONS, per-chunk=$MAX_CHUNK_ITERATIONS"
 echo "Sprint: $CURRENT_SPRINT"
+echo "Repos: $REPOS"
+echo "Project root: $PROJECT_ROOT"
 echo "Logs: $LOG_DIR"
 echo "---"
-log_orchestrator "loop_started: agent=$AGENT model=${MODEL:-custom-command} reasoning=${REASONING:-harness-owned} sprint=$CURRENT_SPRINT max_sprint_iterations=$MAX_SPRINT_ITERATIONS max_chunk_iterations=$MAX_CHUNK_ITERATIONS resume=$RESUME force_hooks=$FORCE_HOOKS"
+log_orchestrator "loop_started: agent=$AGENT model=${MODEL:-custom-command} reasoning=${REASONING:-harness-owned} sprint=$CURRENT_SPRINT repos=$REPOS max_sprint_iterations=$MAX_SPRINT_ITERATIONS max_chunk_iterations=$MAX_CHUNK_ITERATIONS resume=$RESUME force_hooks=$FORCE_HOOKS"
 log_event "loop" "started" "agent=$AGENT model=${MODEL:-custom-command} reasoning=${REASONING:-harness-owned} sprint=$CURRENT_SPRINT"
 
 ensure_manifest_schema
 
+# Pre-check: all chunks already done
 if all_chunks_pass_fn; then
   echo "All chunks already complete! Skipping to post-sprint hooks..."
   echo ""
@@ -511,13 +599,14 @@ if all_chunks_pass_fn; then
     offer_next_sprint_prompt "$NEXT_SPRINT"
   else
     echo "No next sprint is prepared."
-    echo 'Ask your coding agent: "Use $ralph-workflows to create the next sprint from SPEC.md, set CURRENT_SPRINT, validate it, and stop before running."'
+    echo 'Ask your coding agent: "Use $ralph-sprint to create the next sprint from SPEC.md, set CURRENT_SPRINT, validate it, and stop before running."'
     echo "Then run: just run"
   fi
 
   exit 0
 fi
 
+# Turn budgets persist across every invocation, not only --resume runs.
 RECORDED_TURNS=$(jq -r '[.iterations // 0, ((.agent_turns // []) | length)] | max' "$MANIFEST_FILE" 2>/dev/null || echo 0)
 START_ITERATION=$((RECORDED_TURNS + 1))
 if (( START_ITERATION > MAX_SPRINT_ITERATIONS )); then
@@ -547,7 +636,7 @@ for i in $(seq "$START_ITERATION" "$MAX_SPRINT_ITERATIONS"); do
     exit 15
   fi
   record_agent_turn "$EXPECTED_CHUNK_ID" "$i" "$(now_iso)"
-  BEFORE_HEAD=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")
+  BEFORE_REPO_COMMITS=$(get_all_repo_commits)
 
   set +e
   run_agent_with_watchdog
@@ -557,6 +646,7 @@ for i in $(seq "$START_ITERATION" "$MAX_SPRINT_ITERATIONS"); do
   log_orchestrator "agent_done: iteration=$i log=$LOG_FILE exit=$AGENT_EXIT"
   log_event "iteration" "agent_done" "iteration=$i exit=$AGENT_EXIT"
 
+  # ── State-Delta Completion Validation ──────────────────
   AFTER_PASS_IDS=$(passed_chunk_ids)
   NEWLY_PASSED=$(jq -nc --argjson before "$BEFORE_PASS_IDS" --argjson after "$AFTER_PASS_IDS" '$after - $before')
   REMOVED_PASSES=$(jq -nc --argjson before "$BEFORE_PASS_IDS" --argjson after "$AFTER_PASS_IDS" '$before - $after')
@@ -582,9 +672,7 @@ for i in $(seq "$START_ITERATION" "$MAX_SPRINT_ITERATIONS"); do
   fi
 
   if [[ "$TRANSITION_VALID" != "true" && "$NEW_PASS_COUNT" -gt 0 ]]; then
-    for changed_chunk in $(jq -r '.[]' <<<"$NEWLY_PASSED"); do
-      reset_chunk_pass "$changed_chunk"
-    done
+    for changed_chunk in $(jq -r '.[]' <<<"$NEWLY_PASSED"); do reset_chunk_pass "$changed_chunk"; done
   fi
 
   if [[ "$COMPLETION_SIGNAL" == "true" ]]; then
@@ -599,13 +687,13 @@ for i in $(seq "$START_ITERATION" "$MAX_SPRINT_ITERATIONS"); do
       continue
     fi
 
-    AFTER_HEAD=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")
-    if [[ "$AFTER_HEAD" == "$BEFORE_HEAD" && "${RALPH_AUTO_COMMIT:-false}" != "I_ACCEPT_GIT_ADD_ALL" ]]; then
+    AFTER_REPO_COMMITS=$(get_all_repo_commits)
+    if [[ "${RALPH_AUTO_COMMIT:-false}" != "I_ACCEPT_GIT_ADD_ALL" ]] && ! repos_have_commit_evidence "$NEW_CHUNK_ID" "$BEFORE_REPO_COMMITS" "$AFTER_REPO_COMMITS"; then
       reset_chunk_pass "$NEW_CHUNK_ID"
-      record_validation_feedback "$NEW_CHUNK_ID" "$i" "validation passed but no new commit was created" "$VALIDATION_LOG"
-      log_orchestrator "completion_rejected: chunk=$NEW_CHUNK_ID iteration=$i reason=no_new_commit"
+      record_validation_feedback "$NEW_CHUNK_ID" "$i" "validation passed but the chunk-owned repositories have no new commit" "$VALIDATION_LOG"
+      log_orchestrator "completion_rejected: chunk=$NEW_CHUNK_ID iteration=$i reason=no_new_commit owner=$(chunk_owner "$NEW_CHUNK_ID") before=$BEFORE_REPO_COMMITS after=$AFTER_REPO_COMMITS"
       log_event "completion" "rejected" "chunk=$NEW_CHUNK_ID iteration=$i reason=no_new_commit"
-      echo "Chunk $NEW_CHUNK_ID validation passed, but no new commit was created; completion was rejected."
+      echo "Chunk $NEW_CHUNK_ID validation passed, but required repository commits were not created."
       manifest_update --argjson iter "$i" '.iterations = $iter' || true
       sleep 2
       continue
@@ -616,21 +704,14 @@ for i in $(seq "$START_ITERATION" "$MAX_SPRINT_ITERATIONS"); do
     echo "Chunk completed in iteration $i"
     echo "=========================================="
 
-    if [[ "${RALPH_AUTO_COMMIT:-false}" == "true" ]] && git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-      echo "Refusing RALPH_AUTO_COMMIT=true; use RALPH_AUTO_COMMIT=I_ACCEPT_GIT_ADD_ALL to acknowledge broad staging"
-      exit 14
-    fi
-    if [[ "${RALPH_AUTO_COMMIT:-false}" == "I_ACCEPT_GIT_ADD_ALL" ]] && git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-      git -C "$PROJECT_ROOT" add -A
-      git -C "$PROJECT_ROOT" commit -m "ralph: chunk completed (iteration $i)" -q 2>/dev/null || true
-    fi
+    # Backup commit in all repos
+    backup_commit_all_repos "ralph: chunk completed (iteration $i)" || exit $?
 
-    LAST_COMMIT=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")
-    LAST_MSG=$(git -C "$PROJECT_ROOT" log -1 --format="%s" 2>/dev/null || echo "unknown")
+    REPO_COMMITS=$(get_all_repo_commits)
     CHUNK_ID="$NEW_CHUNK_ID"
     manifest_update \
-      --arg hash "$LAST_COMMIT" --arg msg "$LAST_MSG" --argjson chunk "$CHUNK_ID" --argjson iter "$i" \
-      '.commits += [{"hash": $hash, "message": $msg, "chunk_id": $chunk, "iteration": $iter}] | .iterations = $iter' \
+      --argjson commits "$REPO_COMMITS" --argjson chunk "$CHUNK_ID" --argjson iter "$i" \
+      '.commits += [{"chunk_id": $chunk, "iteration": $iter, "repos": $commits}] | .iterations = $iter' \
       || true
 
     if all_chunks_pass_fn; then
@@ -649,7 +730,7 @@ for i in $(seq "$START_ITERATION" "$MAX_SPRINT_ITERATIONS"); do
         offer_next_sprint_prompt "$NEXT_SPRINT"
       else
         echo "No next sprint is prepared."
-        echo 'Ask your coding agent: "Use $ralph-workflows to create the next sprint from SPEC.md, set CURRENT_SPRINT, validate it, and stop before running."'
+        echo 'Ask your coding agent: "Use $ralph-sprint to create the next sprint from SPEC.md, set CURRENT_SPRINT, validate it, and stop before running."'
         echo "Then run: just run"
       fi
 
@@ -662,6 +743,7 @@ for i in $(seq "$START_ITERATION" "$MAX_SPRINT_ITERATIONS"); do
     continue
   fi
 
+  # Check for blocked
   if grep -q "<blocked>" "$LOG_FILE"; then
     REASON=$(sed -n 's/.*<blocked>\(.*\)<\/blocked>.*/\1/p' "$LOG_FILE" | head -1)
     REASON="${REASON:-unknown}"
@@ -673,10 +755,8 @@ for i in $(seq "$START_ITERATION" "$MAX_SPRINT_ITERATIONS"); do
 
   manifest_update --argjson iter "$i" '.iterations = (if (.iterations // 0) < $iter then $iter else .iterations end)' || true
 
-  if [[ "${RALPH_AUTO_COMMIT:-false}" == "I_ACCEPT_GIT_ADD_ALL" ]] && git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-    git -C "$PROJECT_ROOT" add -A
-    git -C "$PROJECT_ROOT" commit -m "ralph: iteration $i" --allow-empty -q 2>/dev/null || true
-  fi
+  # Backup commit for incomplete iterations
+  backup_commit_all_repos "ralph: iteration $i" || exit $?
 
   echo "Iteration $i complete, continuing..."
   log_orchestrator "iteration_complete: $i"

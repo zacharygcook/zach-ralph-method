@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ralph Status"
+  short_description: "Report truthful Ralph loop progress"
+  default_prompt: "Use $ralph-status to inspect the current Ralph sprint, evidence, hooks, logs, and blockers without changing repository state."

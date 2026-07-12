@@ -167,8 +167,8 @@ class RalphRuntimeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory) / "repo"
             repo.mkdir()
-            target = repo / ".agents" / "skills" / "ralph-workflows"
-            shutil.copytree(MODULE_PATH.parents[1] / "skill", target)
+            target = repo / ".agents" / "skills" / "ralph-loop"
+            shutil.copytree(MODULE_PATH.parents[1] / "skills" / "ralph-loop", target)
             shutil.copy2(target / "justfile", repo / "justfile")
             listed = run(str(just), "--list", cwd=repo)
             self.assertEqual(listed.returncode, 0, listed.stderr)
@@ -254,7 +254,7 @@ class RalphRuntimeTest(unittest.TestCase):
         if sync_script.is_file():
             result = run(sys.executable, str(sync_script), "check")
             self.assertEqual(result.returncode, 0, result.stderr)
-            packaged = MODULE_PATH.parents[1] / "skill" / "scripts" / "ralph.py"
+            packaged = MODULE_PATH.parents[1] / "skills" / "ralph-loop" / "scripts" / "ralph.py"
         else:
             self.assertTrue(ralph.PACKAGE_LAYOUT)
             packaged = MODULE_PATH
@@ -419,7 +419,7 @@ class RalphRuntimeTest(unittest.TestCase):
             self.assertNotIn("MAX_CHUNK_ITERATIONS:-5", loop)
             self.assertNotIn("RALPH_AGENT:-${AGENT", loop)
             self.assertNotIn("/ralph-sprint", loop)
-            self.assertIn("Use $ralph-workflows to create the next sprint", loop)
+            self.assertIn("Use $ralph-sprint to create the next sprint", loop)
             self.assertIn("Then run: just run", loop)
 
     def test_init_existing_runtime_interactively_repairs_missing_choices(self) -> None:
