@@ -8,3 +8,7 @@ agent activity.
 Record what was updated in the sprint directory and append durable documentation decisions or dead
 ends to `SCRATCHPAD.md`. If no documentation change is warranted, record the evidence instead of
 manufacturing churn.
+
+If you change documentation in a child repository, inspect its status, stage only your paths, and
+create a descriptive scoped commit there before exiting. The parent orchestrator owns `.ralph/`
+state; never mix it into a child-repository commit.

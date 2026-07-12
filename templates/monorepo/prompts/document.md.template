@@ -8,3 +8,7 @@ agent activity.
 Record what was updated in the sprint directory and append durable documentation decisions or dead
 ends to `SCRATCHPAD.md`. If no documentation change is warranted, record the evidence instead of
 manufacturing churn.
+
+If you change repository documentation, inspect status, stage only those paths, and create a
+descriptive scoped commit before exiting. When `RALPH_STATE_MODE=tracked`, include the documentation
+record and scratchpad artifacts; when it is `local`, never stage `.ralph/`.

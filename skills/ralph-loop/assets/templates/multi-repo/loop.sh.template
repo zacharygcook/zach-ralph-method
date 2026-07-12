@@ -16,14 +16,13 @@ MAX_CHUNK_ITERATIONS="${MAX_CHUNK_ITERATIONS:-}"
 AGENT="${RALPH_AGENT:-}"
 MODEL="${RALPH_AGENT_MODEL:-}"
 REASONING="${RALPH_AGENT_REASONING:-}"
+STATE_MODE="${RALPH_STATE_MODE:-}"
 CURRENT_SPRINT="${CURRENT_SPRINT:-}"
 REPOS="${RALPH_REPOS:-${REPOS:-api frontend}}"
 PRIMARY_REPO="${RALPH_PRIMARY_REPO:-${PRIMARY_REPO:-api}}"
 HEARTBEAT_SEC="${HEARTBEAT_SEC:-30}"
 AGENT_IDLE_TIMEOUT_SEC="${AGENT_IDLE_TIMEOUT_SEC:-0}"
 POST_RESULT_IDLE_SEC="${POST_RESULT_IDLE_SEC:-45}"
-RALPH_INTERACTIVE="${RALPH_INTERACTIVE:-false}"
-RALPH_INTERACTIVE_TIMEOUT_SEC="${RALPH_INTERACTIVE_TIMEOUT_SEC:-20}"
 CHUNK_VALIDATION_ENABLED="${RALPH_CHUNK_VALIDATION_ENABLED:-true}"
 CHUNK_VALIDATION_COMMAND="${RALPH_CHUNK_VALIDATION_COMMAND:-}"
 VALIDATION_HEARTBEAT_SEC="${VALIDATION_HEARTBEAT_SEC:-15}"
@@ -73,13 +72,15 @@ fi
 # ── CLI Flags ──────────────────────────────────────────────
 RESUME=false
 FORCE_HOOKS=false
+AUTO_ADVANCE=false
 for arg in "$@"; do
   case "$arg" in
     --resume) RESUME=true ;;
     --force-hooks) FORCE_HOOKS=true ;;
+    --auto-advance) AUTO_ADVANCE=true ;;
     *)
       echo "Unknown option: $arg"
-      echo "Usage: ./loop.sh [--resume] [--force-hooks]"
+      echo "Usage: ./loop.sh [--resume] [--force-hooks] [--auto-advance]"
       exit 1
       ;;
   esac
@@ -363,38 +364,42 @@ handle_loop_signal() {
 }
 
 # ── Next Sprint ────────────────────────────────────────────
-get_next_sprint() {
-  local current_num next_num candidate
-  current_num=$(echo "$CURRENT_SPRINT" | grep -oE '^[0-9]+' || echo "")
-  [[ -z "$current_num" ]] && return 0
-  next_num=$((current_num + 1))
-  for candidate in "$SCRIPT_DIR/sprints/${next_num}-"*; do
-    if [[ -d "$candidate" ]]; then
-      basename "$candidate"
+finish_run() {
+  local output exit_code
+
+  if [[ "$AUTO_ADVANCE" == "true" ]]; then
+    if output=$("$PYTHON_BIN" "$SCRIPT_DIR/advance.py" --runtime "$SCRIPT_DIR" 2>&1); then
+      echo ""
+      echo "Advancing to $output..."
+      log_orchestrator "sprint_auto_advanced: next=$output"
+      log_event "sprint" "advanced" "next=$output"
+      exec "$SCRIPT_DIR/loop.sh" --auto-advance
+    else
+      exit_code=$?
+      if [[ "$exit_code" -eq 3 ]]; then
+        echo "No next sprint is prepared. Marathon complete."
+        echo 'Ask your coding agent: "Use $ralph-sprint to create the next sprint from SPEC.md, set CURRENT_SPRINT, validate it, and stop before running."'
+        return 0
+      fi
+      echo "Unable to auto-advance: $output"
+      return "$exit_code"
+    fi
+  fi
+
+  if output=$("$PYTHON_BIN" "$SCRIPT_DIR/advance.py" --runtime "$SCRIPT_DIR" --show-next 2>&1); then
+    echo ""
+    echo "Next sprint prepared: $output"
+    echo "Run: just next"
+  else
+    exit_code=$?
+    if [[ "$exit_code" -eq 3 ]]; then
+      echo "No next sprint is prepared."
+      echo 'Ask your coding agent: "Use $ralph-sprint to create the next sprint from SPEC.md, set CURRENT_SPRINT, validate it, and stop before running."'
+      echo "Then run: just run"
       return 0
     fi
-  done
-  return 0
-}
-
-offer_next_sprint_prompt() {
-  local next_sprint="$1"
-
-  echo ""
-  echo "Next sprint available: $next_sprint"
-  echo "To start: Update CURRENT_SPRINT=$next_sprint in config.env and run ./loop.sh"
-  echo ""
-
-  if [[ "$RALPH_INTERACTIVE" == "true" ]] && [[ -t 0 ]]; then
-    if read -r -t "$RALPH_INTERACTIVE_TIMEOUT_SEC" -p "Auto-update config and continue? [y/N] " REPLY; then
-      echo
-      if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "Set CURRENT_SPRINT=$next_sprint in $SCRIPT_DIR/config.env, then run ./loop.sh again."
-      fi
-    else
-      echo
-      echo "Skipping prompt after timeout (${RALPH_INTERACTIVE_TIMEOUT_SEC}s)."
-    fi
+    echo "Unable to inspect the next sprint: $output"
+    return "$exit_code"
   fi
 }
 
@@ -431,6 +436,21 @@ run_post_sprint_hooks() {
   fi
 }
 
+commit_sprint_state() {
+  [[ "$STATE_MODE" == "tracked" ]] || return 0
+  local paths=(".ralph/config.env" ".ralph/sprints/$CURRENT_SPRINT")
+  if ! git -C "$PROJECT_ROOT" ls-files --error-unmatch .ralph/loop.sh >/dev/null 2>&1; then
+    paths=(.ralph)
+  fi
+  git -C "$PROJECT_ROOT" add -- "${paths[@]}"
+  if git -C "$PROJECT_ROOT" diff --cached --quiet -- "${paths[@]}"; then
+    return 0
+  fi
+  git -C "$PROJECT_ROOT" commit --only -m "Record Ralph sprint $CURRENT_SPRINT state" -- "${paths[@]}"
+  log_orchestrator "sprint_state_committed: sprint=$CURRENT_SPRINT"
+  log_event "sprint_state" "committed" "sprint=$CURRENT_SPRINT"
+}
+
 # ── Reconciliation ─────────────────────────────────────────
 RECONCILIATION_DONE=false
 reconcile_completion_state() {
@@ -454,6 +474,7 @@ reconcile_completion_state() {
   if hooks_completed && [[ "$FORCE_HOOKS" != "true" ]]; then
     log_orchestrator "reconcile_skip: hooks_already_done"
     log_event "reconcile" "skipped" "hooks_already_done"
+    commit_sprint_state || return 14
     return 0
   fi
 
@@ -463,6 +484,7 @@ reconcile_completion_state() {
 
   if jq -e '([.hooks.review.status, .hooks.documentation.status, .hooks.validation.status] | all(. == "done" or . == "skipped"))' "$MANIFEST_FILE" >/dev/null 2>&1; then
     mark_hooks_phase_done || true
+    commit_sprint_state || return 14
     return 0
   fi
   return 14
@@ -594,14 +616,7 @@ if all_chunks_pass_fn; then
     exit 14
   fi
 
-  NEXT_SPRINT=$(get_next_sprint)
-  if [[ -n "$NEXT_SPRINT" ]]; then
-    offer_next_sprint_prompt "$NEXT_SPRINT"
-  else
-    echo "No next sprint is prepared."
-    echo 'Ask your coding agent: "Use $ralph-sprint to create the next sprint from SPEC.md, set CURRENT_SPRINT, validate it, and stop before running."'
-    echo "Then run: just run"
-  fi
+  finish_run
 
   exit 0
 fi
@@ -725,14 +740,7 @@ for i in $(seq "$START_ITERATION" "$MAX_SPRINT_ITERATIONS"); do
         exit 14
       fi
 
-      NEXT_SPRINT=$(get_next_sprint)
-      if [[ -n "$NEXT_SPRINT" ]]; then
-        offer_next_sprint_prompt "$NEXT_SPRINT"
-      else
-        echo "No next sprint is prepared."
-        echo 'Ask your coding agent: "Use $ralph-sprint to create the next sprint from SPEC.md, set CURRENT_SPRINT, validate it, and stop before running."'
-        echo "Then run: just run"
-      fi
+      finish_run
 
       trap - EXIT
       exit 0

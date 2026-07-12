@@ -32,6 +32,8 @@ BUDGET_ARGS = (
     "30",
     "--max-chunk-iterations",
     "5",
+    "--state-mode",
+    "tracked",
 )
 
 
@@ -175,12 +177,142 @@ class RalphRuntimeTest(unittest.TestCase):
             shutil.copy2(target / "justfile", repo / "justfile")
             listed = run(str(just), "--list", cwd=repo)
             self.assertEqual(listed.returncode, 0, listed.stderr)
-            for recipe in ("init", "upgrade", "validate", "status", "run", "resume"):
+            for recipe in (
+                "init",
+                "upgrade",
+                "validate",
+                "status",
+                "run",
+                "next",
+                "marathon",
+                "resume",
+            ):
                 self.assertIn(recipe, listed.stdout)
             dry_run = run(str(just), "--dry-run", "init", cwd=repo)
             self.assertEqual(dry_run.returncode, 0, dry_run.stderr)
             self.assertIn("scripts/ralph", dry_run.stderr)
             self.assertIn("init --repo", dry_run.stderr)
+            next_run = run(str(just), "--dry-run", "next", cwd=repo)
+            self.assertEqual(next_run.returncode, 0, next_run.stderr)
+            self.assertIn("advance --repo", next_run.stderr)
+            self.assertIn(".ralph/loop.sh", next_run.stderr)
+            marathon = run(str(just), "--dry-run", "marathon", cwd=repo)
+            self.assertEqual(marathon.returncode, 0, marathon.stderr)
+            self.assertIn("--auto-advance", marathon.stderr)
+
+    def test_state_mode_is_explicit_and_local_mode_ignores_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            missing = run_cli(
+                "init",
+                "--repo",
+                str(repo),
+                "--agent",
+                "custom",
+                "--agent-command",
+                "true",
+                "--max-sprint-iterations",
+                "5",
+                "--max-chunk-iterations",
+                "2",
+                "--disable-chunk-validation",
+                "--disable-sprint-validation",
+            )
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("--state-mode", missing.stderr)
+
+            initialized = run_cli(
+                "init",
+                "--repo",
+                str(repo),
+                "--agent",
+                "custom",
+                "--agent-command",
+                "true",
+                "--state-mode",
+                "local",
+                "--max-sprint-iterations",
+                "5",
+                "--max-chunk-iterations",
+                "2",
+                "--disable-chunk-validation",
+                "--disable-sprint-validation",
+            )
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            config = ralph.parse_config(repo / ".ralph" / "config.env")
+            self.assertEqual(config["RALPH_STATE_MODE"], "local")
+            ignored = run("git", "check-ignore", ".ralph/config.env", cwd=repo)
+            self.assertEqual(ignored.returncode, 0, ignored.stderr)
+
+            tracked_repo = Path(directory) / "tracked"
+            initialize_repo(tracked_repo)
+            tracked = run_cli(
+                "init",
+                "--repo",
+                str(tracked_repo),
+                "--agent",
+                "custom",
+                "--agent-command",
+                "true",
+                *BUDGET_ARGS,
+                "--disable-chunk-validation",
+                "--disable-sprint-validation",
+            )
+            self.assertEqual(tracked.returncode, 0, tracked.stderr)
+            run("git", "add", ".ralph/config.env", cwd=tracked_repo)
+            run("git", "commit", "-m", "Track Ralph config", cwd=tracked_repo)
+            refused = run_cli(
+                "upgrade", "--repo", str(tracked_repo), "--state-mode", "local"
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("files are tracked", refused.stderr)
+            self.assertEqual(
+                ralph.parse_config(tracked_repo / ".ralph" / "config.env")[
+                    "RALPH_STATE_MODE"
+                ],
+                "tracked",
+            )
+
+    def test_advance_requires_completed_current_sprint_and_commits_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            initialized = run_cli(
+                "init",
+                "--repo",
+                str(repo),
+                "--agent",
+                "custom",
+                "--agent-command",
+                "true",
+                *BUDGET_ARGS,
+                "--disable-chunk-validation",
+                "--disable-sprint-validation",
+            )
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            current = create_sprint(repo, "1-current")
+            create_sprint(repo, "2-next")
+            config = repo / ".ralph" / "config.env"
+            replace_config(config, "CURRENT_SPRINT", "1-current")
+
+            refused = run_cli("advance", "--repo", str(repo))
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("manifest.json", refused.stderr)
+            self.assertIn("CURRENT_SPRINT=1-current", config.read_text())
+
+            chunks = json.loads((current / "chunks.json").read_text())
+            chunks["chunks"][0]["passes"] = True
+            (current / "chunks.json").write_text(json.dumps(chunks) + "\n")
+            (current / "manifest.json").write_text(
+                json.dumps({"phase": "hooks_done"}) + "\n", encoding="utf-8"
+            )
+            advanced = run_cli("advance", "--repo", str(repo))
+            self.assertEqual(advanced.returncode, 0, advanced.stderr)
+            self.assertIn("Selected next sprint: 2-next", advanced.stdout)
+            self.assertIn("CURRENT_SPRINT=2-next", config.read_text())
+            subject = run("git", "log", "-1", "--format=%s", cwd=repo)
+            self.assertEqual(subject.stdout.strip(), "Advance Ralph to sprint 2-next")
 
     def test_launcher_supports_python_or_python3_without_documenting_either(self) -> None:
         launcher = MODULE_PATH.with_name("ralph")
@@ -338,7 +470,7 @@ class RalphRuntimeTest(unittest.TestCase):
             second = run_cli(
                 "init", "--repo", str(invalid_budget), "--agent", "codex",
                 "--model", "test-model", "--max-sprint-iterations", "30",
-                "--reasoning-effort", "medium", "--max-chunk-iterations", "0", "--disable-chunk-validation",
+                "--reasoning-effort", "medium", "--max-chunk-iterations", "0", "--state-mode", "tracked", "--disable-chunk-validation",
                 "--disable-sprint-validation",
             )
             self.assertNotEqual(first.returncode, 0)
@@ -348,6 +480,7 @@ class RalphRuntimeTest(unittest.TestCase):
                 "--reasoning-effort",
                 "--max-sprint-iterations",
                 "--max-chunk-iterations",
+                "--state-mode",
             ):
                 self.assertIn(option, first.stderr)
             self.assertNotEqual(second.returncode, 0)
@@ -366,7 +499,7 @@ class RalphRuntimeTest(unittest.TestCase):
         with (
             mock.patch("sys.stdin.isatty", return_value=True),
             mock.patch("sys.stdout.isatty", return_value=True),
-            mock.patch("builtins.input", side_effect=["codex", "chosen-model", "high", "2", "11"]),
+            mock.patch("builtins.input", side_effect=["codex", "chosen-model", "high", "2", "11", "tracked"]),
         ):
             ralph.resolve_init_operator_choices(arguments)
         self.assertEqual(arguments.agent, "codex")
@@ -374,6 +507,7 @@ class RalphRuntimeTest(unittest.TestCase):
         self.assertEqual(arguments.reasoning_effort, "high")
         self.assertEqual(arguments.max_sprint_iterations, 11)
         self.assertEqual(arguments.max_chunk_iterations, 2)
+        self.assertEqual(arguments.state_mode, "tracked")
 
     def test_interactive_init_collects_repository_validation_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -391,6 +525,7 @@ class RalphRuntimeTest(unittest.TestCase):
                         "high",
                         "2",
                         "11",
+                        "tracked",
                         "./scripts/fast-check.sh",
                         "./scripts/full-check.sh",
                     ],
@@ -421,9 +556,12 @@ class RalphRuntimeTest(unittest.TestCase):
             self.assertNotIn("MAX_ITERATIONS:-30", loop)
             self.assertNotIn("MAX_CHUNK_ITERATIONS:-5", loop)
             self.assertNotIn("RALPH_AGENT:-${AGENT", loop)
+            self.assertNotIn("RALPH_INTERACTIVE", loop)
+            self.assertNotIn("Auto-update config and continue", loop)
             self.assertNotIn("/ralph-sprint", loop)
             self.assertIn("Use $ralph-sprint to create the next sprint", loop)
             self.assertIn("Then run: just run", loop)
+            self.assertIn("--auto-advance", loop)
 
     def test_init_existing_runtime_interactively_repairs_missing_choices(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -660,7 +798,7 @@ class RalphRuntimeTest(unittest.TestCase):
             result = run_cli(
                 "init", "--repo", str(root), "--mode", "multi-repo",
                 "--repos", "api", "web", "--agent", "custom",
-                "--agent-command", "true", *BUDGET_ARGS, "--chunk-validation-command", "true", "--disable-tests",
+                "--agent-command", "true", *BUDGET_ARGS, "--state-mode", "local", "--chunk-validation-command", "true", "--disable-tests",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             create_sprint(root, repo="api")
@@ -697,7 +835,7 @@ class RalphRuntimeTest(unittest.TestCase):
             initialized = run_cli(
                 "init", "--repo", str(root), "--mode", "multi-repo",
                 "--repos", "service", "dashboard", "--agent", "custom",
-                "--agent-command", command, *BUDGET_ARGS,
+                "--agent-command", command, *BUDGET_ARGS, "--state-mode", "local",
                 "--disable-review", "--disable-documentation", "--disable-tests",
                 "--chunk-validation-command", "true",
             )
@@ -832,7 +970,63 @@ class RalphRuntimeTest(unittest.TestCase):
             status = run_cli("status", "--repo", str(repo))
             self.assertEqual(status.returncode, 0, status.stderr)
             self.assertIn("Manifest phase: hooks_done", status.stdout)
-            self.assertFalse(run("git", "status", "--porcelain", cwd=repo).stdout == "")
+            self.assertEqual(
+                run("git", "status", "--porcelain", "--", ".ralph", cwd=repo).stdout,
+                "",
+            )
+
+    def test_marathon_advances_through_prepared_sprints_and_stops_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            initialize_repo(repo)
+            fake_agent = repo / "fake_agent.py"
+            fake_agent.write_text(
+                "import json, os, pathlib, subprocess\n"
+                "root = pathlib.Path(os.environ['RALPH_PROJECT_ROOT'])\n"
+                "prompt = pathlib.Path(os.environ['RALPH_PROMPT_FILE'])\n"
+                "chunks = prompt.parent / 'chunks.json'\n"
+                "data = json.loads(chunks.read_text())\n"
+                "data['chunks'][0]['passes'] = True\n"
+                "chunks.write_text(json.dumps(data, indent=2) + '\\n')\n"
+                "readme = root / 'README.md'\n"
+                "readme.write_text(readme.read_text() + prompt.parent.name + '\\n')\n"
+                "subprocess.run(['git', 'add', 'README.md', str(chunks.relative_to(root))], cwd=root, check=True)\n"
+                "subprocess.run(['git', 'commit', '-m', 'Complete ' + prompt.parent.name], cwd=root, check=True, capture_output=True)\n"
+                "print('RALPH_CHUNK_COMPLETE')\n",
+                encoding="utf-8",
+            )
+            command = f"{shlex.quote(sys.executable)} {shlex.quote(str(fake_agent))}"
+            initialized = run_cli(
+                "init",
+                "--repo",
+                str(repo),
+                "--agent",
+                "custom",
+                "--agent-command",
+                command,
+                *BUDGET_ARGS,
+                "--disable-review",
+                "--disable-documentation",
+                "--disable-sprint-validation",
+                "--chunk-validation-command",
+                "true",
+            )
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            first = create_sprint(repo, "1-first")
+            second = create_sprint(repo, "2-second")
+            config = repo / ".ralph" / "config.env"
+            replace_config(config, "CURRENT_SPRINT", "1-first")
+            loop = run(str(repo / ".ralph" / "loop.sh"), "--auto-advance", cwd=repo)
+            self.assertEqual(loop.returncode, 0, f"{loop.stdout}\n{loop.stderr}")
+            self.assertIn("Marathon complete", loop.stdout)
+            self.assertIn("CURRENT_SPRINT=2-second", config.read_text())
+            for sprint in (first, second):
+                manifest = json.loads((sprint / "manifest.json").read_text())
+                self.assertEqual(manifest["phase"], "hooks_done")
+            self.assertEqual(
+                run("git", "status", "--porcelain", "--", ".ralph", cwd=repo).stdout,
+                "",
+            )
 
     def test_failed_chunk_validation_resets_and_repairs_next_iteration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1029,7 +1223,7 @@ class RalphRuntimeTest(unittest.TestCase):
                     "init", "--repo", str(repo), "--agent", "custom",
                     "--agent-command", "true", "--disable-chunk-validation",
                     "--disable-tests", "--max-sprint-iterations", "3",
-                    "--max-chunk-iterations", "1",
+                    "--max-chunk-iterations", "1", "--state-mode", "local",
                 ).returncode,
                 0,
             )
@@ -1050,7 +1244,7 @@ class RalphRuntimeTest(unittest.TestCase):
                     "init", "--repo", str(repo), "--agent", "custom",
                     "--agent-command", "true", "--disable-chunk-validation",
                     "--disable-tests", "--max-sprint-iterations", "1",
-                    "--max-chunk-iterations", "5",
+                    "--max-chunk-iterations", "5", "--state-mode", "local",
                 ).returncode,
                 0,
             )

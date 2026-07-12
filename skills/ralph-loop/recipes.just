@@ -29,6 +29,16 @@ status:
 run: validate
     "{{ repo }}/.ralph/loop.sh"
 
+[doc('Select, validate, and run the next prepared sprint')]
+next:
+    "{{ ralph }}" advance --repo "{{ repo }}"
+    "{{ ralph }}" validate --repo "{{ repo }}"
+    "{{ repo }}/.ralph/loop.sh"
+
+[doc('Run prepared sprints continuously until work or validation stops')]
+marathon: validate
+    "{{ repo }}/.ralph/loop.sh" --auto-advance
+
 [doc('Validate and resume an interrupted sprint')]
 resume: validate
     "{{ repo }}/.ralph/loop.sh" --resume

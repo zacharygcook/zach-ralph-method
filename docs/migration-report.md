@@ -126,8 +126,9 @@ HOOK_HEARTBEAT_SEC=30
 HOOK_IDLE_TIMEOUT_SEC=0
 BACKEND_TEST_IDLE_TIMEOUT_SEC=0
 E2E_IDLE_TIMEOUT_SEC=0
-RALPH_INTERACTIVE=false
-RALPH_INTERACTIVE_TIMEOUT_SEC=30
+The legacy `RALPH_INTERACTIVE` prompt was retired after dogfooding showed that it promised to advance
+but only printed manual instructions. Current releases use explicit `just next` and `just marathon`
+commands instead.
 EOF
 
 # 5. Update loop.sh and hooks from latest templates

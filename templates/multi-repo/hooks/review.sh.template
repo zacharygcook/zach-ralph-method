@@ -31,7 +31,7 @@ done
 PROMPT_FILE="${RALPH_HOOK_RUNTIME_DIR:-$SPRINT_DIR}/review.prompt.md"
 {
   cat "$RALPH_DIR/prompts/review.md"
-  printf '\n## Multi-repository sprint context\n\n- Sprint directory: `%s`\n- Project root: `%s`\n\n%s' "$SPRINT_DIR" "$PROJECT_ROOT" "$RANGES"
+  printf '\n## Multi-repository sprint context\n\n- Sprint directory: `%s`\n- Project root: `%s`\n- Ralph state mode: `%s`\n\n%s' "$SPRINT_DIR" "$PROJECT_ROOT" "${RALPH_STATE_MODE:-local}" "$RANGES"
 } > "$PROMPT_FILE"
 
 run_agent "${RALPH_REVIEW_AGENT:-${RALPH_AGENT:-}}" "$PROMPT_FILE" "$PROJECT_ROOT"

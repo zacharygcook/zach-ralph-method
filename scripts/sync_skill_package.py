@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MAPPINGS = (
     (ROOT / "scripts" / "ralph", ROOT / "skills" / "ralph-loop" / "scripts" / "ralph"),
+    (ROOT / "scripts" / "advance_sprint.py", ROOT / "skills" / "ralph-loop" / "scripts" / "advance_sprint.py"),
     (ROOT / "scripts" / "ralph.py", ROOT / "skills" / "ralph-loop" / "scripts" / "ralph.py"),
     (ROOT / "tests" / "test_ralph.py", ROOT / "skills" / "ralph-loop" / "scripts" / "test_ralph.py"),
     (ROOT / "VERSION", ROOT / "skills" / "ralph-loop" / "assets" / "VERSION"),

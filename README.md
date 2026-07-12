@@ -48,8 +48,9 @@ just init
 ```
 
 The setup suggests strong models for the selected harness, asks for reasoning effort, explains useful
-turn-budget ranges, then collects fast chunk and comprehensive sprint validation. It never hides an
-operator choice behind a default.
+turn-budget ranges, collects fast chunk and comprehensive sprint validation, and asks whether Ralph's
+durable state should be tracked in Git or remain local. It never hides an operator choice behind a
+default.
 
 ### Everyday commands
 
@@ -58,7 +59,9 @@ just init       # configure a new or existing runtime
 just upgrade    # update the skill and runtime safely
 just validate   # check readiness without running
 just status     # inspect the current sprint
-just run        # validate, then start
+just run        # run one sprint, then pause
+just next       # select, validate, and run the next prepared sprint
+just marathon   # continuously run prepared sprints
 just resume     # validate, then resume
 ```
 
@@ -146,8 +149,10 @@ Inspect progress at any time with:
 just status
 ```
 
-Use `just resume` after interruption. Use the automation interface below only when intentionally
-rerunning completed post-sprint hooks.
+`just run` always preserves the sprint boundary as a human QA pause. After a completed sprint,
+`just next` atomically selects and starts exactly one sequential prepared sprint. `just marathon`
+is explicit authorization to continue through prepared sprints until a failure, blocker, exhausted
+budget, or missing next sprint stops it. Use `just resume` after interruption.
 
 ### Which skill should I use?
 
@@ -193,6 +198,11 @@ selected harness, explicit model, positive explicitly selected sprint and per-ch
 and configured validation commands. Neither installation nor the Bash runtime guesses those
 operator decisions.
 
+State ownership is explicit. `tracked` mode keeps `.ralph/` durable state in Git, ignores runtime
+logs, asks hook agents to commit their scoped fixes/docs, and creates a final Ralph-only state commit
+after successful hooks. `local` mode excludes `.ralph/` through the repository-local Git exclude
+file and never commits it. Existing tracked runtimes are inferred safely during upgrade.
+
 The runtime does not auto-commit broadly. A project must set
 `RALPH_AUTO_COMMIT=I_ACCEPT_GIT_ADD_ALL` to deliberately enable broad backup commits; normal agent
 prompts instruct scoped staging instead.
@@ -217,11 +227,12 @@ pre-commit hook for earlier feedback, but Ralph's independent gate remains autho
 Agents and scripts can bypass the interactive recipes by passing every decision explicitly:
 
 ```bash
-./.agents/skills/ralph-loop/scripts/ralph init --repo . --agent "your harness" --model "your model" --reasoning-effort "your reasoning" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+./.agents/skills/ralph-loop/scripts/ralph init --repo . --agent "your harness" --model "your model" --reasoning-effort "your reasoning" --state-mode "tracked or local" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
 ./.agents/skills/ralph-loop/scripts/ralph upgrade --repo .
 ./.agents/skills/ralph-loop/scripts/ralph validate --repo .
 ./.ralph/loop.sh --resume
 ./.ralph/loop.sh --force-hooks
+./.ralph/loop.sh --auto-advance
 ```
 
 ## Validation and portability

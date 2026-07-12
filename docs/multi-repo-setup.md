@@ -25,7 +25,7 @@ npx skills add zacharygcook/zach-ralph-method
 Then initialize the parent runtime from the vendored package:
 
 ```bash
-./.agents/skills/ralph-loop/scripts/ralph init --repo /path/to/product --mode multi-repo --repos service dashboard mobile --primary-repo service --agent codex --model "your model" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast validation command" --sprint-validation-command "your full validation command"
+./.agents/skills/ralph-loop/scripts/ralph init --repo /path/to/product --mode multi-repo --repos service dashboard mobile --primary-repo service --agent codex --model "your model" --reasoning-effort "your reasoning" --state-mode local --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast validation command" --sprint-validation-command "your full validation command"
 ```
 
 The installer verifies every named child contains `.git`, records the topology in `.runtime-manifest.json`, and writes `RALPH_REPOS` plus `RALPH_PRIMARY_REPO` to `config.env`.

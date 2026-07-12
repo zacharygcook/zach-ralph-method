@@ -12,7 +12,8 @@ Operate an autonomous implementation loop as a resumable state machine, not a on
 When a user asks how to start, preflight the repository instead of explaining sprint internals first:
 
 1. Confirm a Git repository; Bash, Git, `jq`, and Python 3; an explicit harness, model, and reasoning
-   choice (or a fully owned custom command); positive sprint and per-chunk turn budgets; a durable `SPEC.md` or
+   choice (or a fully owned custom command); positive sprint and per-chunk turn budgets; an explicit
+   tracked-or-local state choice; a durable `SPEC.md` or
    equivalent; and credible fast chunk plus comprehensive sprint validation commands. Node.js/npm
    and `npx` are required when the skill still needs to be installed or updated.
 2. Read repository agent instructions and the spec before choosing commands or planning work.
@@ -49,9 +50,10 @@ instructions, installer, and runtime templates. Use `--agent <name>` only to tar
 `scripts/ralph` launcher from the detected skill directory; it selects Python 3.11+ from either the
 `python3` or `python` command.
 
-Prefer `just init`, `just upgrade`, `just validate`, `just status`, `just run`, and `just resume` in
-operator-facing instructions. Keep the underlying Skills CLI and fully explicit launcher commands
-for agents and automation.
+Prefer `just init`, `just upgrade`, `just validate`, `just status`, `just run`, `just next`,
+`just marathon`, and `just resume` in operator-facing instructions. `just run` deliberately pauses
+after one sprint; `just next` advances exactly once; `just marathon` explicitly authorizes continuous
+prepared-sprint execution. Keep fully explicit launcher commands for agents and automation.
 
 For a repository that already has `skills-lock.json`, refresh the package before upgrading the
 project runtime:
@@ -69,13 +71,13 @@ not run arbitrary lifecycle hooks.
 Install the bundled hardened Bash runtime only when the user asks to initialize or repair Ralph:
 
 ```bash
-<skill-dir>/scripts/ralph init --repo <repository> --agent <agent> --model '<model>' --reasoning-effort '<effort>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
+<skill-dir>/scripts/ralph init --repo <repository> --agent <agent> --model '<model>' --reasoning-effort '<effort>' --state-mode <tracked-or-local> --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast repo-native command>' --sprint-validation-command '<full repo-native command>'
 ```
 
 For a parent directory containing independent child Git repositories, use multi-repo mode:
 
 ```bash
-<skill-dir>/scripts/ralph init --repo <parent> --mode multi-repo --repos <repo-a> <repo-b> --primary-repo <repo-a> --agent <agent> --model '<model>' --reasoning-effort '<effort>' --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast cross-repo command>' --sprint-validation-command '<full cross-repo command>'
+<skill-dir>/scripts/ralph init --repo <parent> --mode multi-repo --repos <repo-a> <repo-b> --primary-repo <repo-a> --agent <agent> --model '<model>' --reasoning-effort '<effort>' --state-mode <tracked-or-local> --max-sprint-iterations <sprint-turns> --max-chunk-iterations <chunk-turns> --chunk-validation-command '<fast cross-repo command>' --sprint-validation-command '<full cross-repo command>'
 ```
 
 Initialization is non-destructive: when `.ralph/` already exists, `init` enters the same safe upgrade
@@ -138,6 +140,9 @@ Read only the references needed for the requested operation.
 - Final sprint validation runs after review and documentation mutations; optional E2E runs last.
 - Automatic broad Git staging is off. Do not enable `RALPH_AUTO_COMMIT=I_ACCEPT_GIT_ADD_ALL` in a
   repository with concurrent dirty work; prefer agent-created scoped commits.
+- `tracked` state mode commits only `.ralph/` after successful sprint hooks and asks hook agents to
+  commit their own scoped project changes. `local` mode excludes `.ralph/` from Git entirely. Never
+  silently choose between them for a new installation.
 - Multi-repo chunks name a configured child repository or `all`; manifests retain independent start
   and end commit ranges, and agents commit separately inside each changed repository.
 

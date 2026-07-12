@@ -9,3 +9,7 @@ open questions instead.
 Write `REVIEW.md` in the sprint directory with findings, fixes applied, checks run, and residual
 risk. Keep unrelated dirty work untouched. Do not use broad destructive git commands or silently
 weaken tests. Append durable discoveries and dead ends to `SCRATCHPAD.md` before exiting.
+
+If you change source, tests, documentation, or sprint artifacts, inspect status, stage only those
+paths, and create a descriptive scoped commit before exiting. When `RALPH_STATE_MODE=tracked`, include
+the review and scratchpad artifacts; when it is `local`, never stage `.ralph/`.

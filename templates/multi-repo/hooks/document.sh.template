@@ -21,7 +21,7 @@ MANIFEST="$SPRINT_DIR/manifest.json"
 PROMPT_FILE="${RALPH_HOOK_RUNTIME_DIR:-$SPRINT_DIR}/documentation.prompt.md"
 {
   cat "$RALPH_DIR/prompts/document.md"
-  printf '\n## Sprint context\n\n- Sprint directory: `%s`\n- Project root: `%s`\n' "$SPRINT_DIR" "$PROJECT_ROOT"
+  printf '\n## Sprint context\n\n- Sprint directory: `%s`\n- Project root: `%s`\n- Ralph state mode: `%s`\n' "$SPRINT_DIR" "$PROJECT_ROOT" "${RALPH_STATE_MODE:-local}"
 } > "$PROMPT_FILE"
 
 run_agent "${RALPH_DOCUMENTATION_AGENT:-${RALPH_AGENT:-}}" "$PROMPT_FILE" "$PROJECT_ROOT"

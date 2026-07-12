@@ -12,6 +12,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+if str(SCRIPT_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIRECTORY))
+
+from advance_sprint import AdvanceError, NoNextSprint, next_sprint
+
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_LAYOUT = (ROOT / "assets" / "templates").is_dir()
@@ -19,6 +25,7 @@ TEMPLATES = ROOT / "assets" / "templates" if PACKAGE_LAYOUT else ROOT / "templat
 VERSION_FILE = ROOT / "assets" / "VERSION" if PACKAGE_LAYOUT else ROOT / "VERSION"
 SHARED_FILES = {
     "VERSION": VERSION_FILE,
+    "advance.py": ROOT / "scripts" / "advance_sprint.py",
     "format-codex-stream.py": TEMPLATES / "shared" / "format-codex-stream.py",
     "format-stream.py": TEMPLATES / "shared" / "format-stream.py",
     "pretty-process-snapshots.py": TEMPLATES / "shared" / "pretty-process-snapshots.py",
@@ -39,6 +46,7 @@ MODE_FILES = {
 MODES = {"monorepo", "multi-repo"}
 AGENTS = {"amp", "claude", "codex", "droid", "grok", "opencode", "custom"}
 REASONING_AGENTS = {"claude", "codex", "droid", "grok", "opencode"}
+STATE_MODES = {"tracked", "local"}
 MODEL_SUGGESTIONS: dict[str, tuple[tuple[str, str], ...]] = {
     "codex": (
         ("gpt-5.5", "excellent cost/capability balance"),
@@ -234,6 +242,19 @@ def prompt_command(label: str) -> str:
     return value
 
 
+def prompt_state_mode() -> str:
+    print("\nRalph state storage:")
+    print("  1. tracked — commit durable sprint state and share it through Git")
+    print("  2. local — keep the entire .ralph runtime out of Git")
+    while True:
+        value = input("State storage: ").strip().lower()
+        if value in {"1", "tracked"}:
+            return "tracked"
+        if value in {"2", "local"}:
+            return "local"
+        print("Choose 1/tracked or 2/local.", file=sys.stderr)
+
+
 def resolve_validation_commands(
     chunk_enabled: bool,
     chunk_command: str,
@@ -276,6 +297,8 @@ def resolve_init_operator_choices(arguments: argparse.Namespace) -> None:
         missing.append("--max-sprint-iterations")
     if arguments.max_chunk_iterations is None:
         missing.append("--max-chunk-iterations")
+    if not arguments.state_mode:
+        missing.append("--state-mode")
     if not missing:
         return
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -309,6 +332,8 @@ def resolve_init_operator_choices(arguments: argparse.Namespace) -> None:
                 (60, "large or exploratory sprint"),
             ),
         )
+    if not arguments.state_mode:
+        arguments.state_mode = prompt_state_mode()
 
 
 def resolve_upgrade_operator_choices(
@@ -364,6 +389,77 @@ def runtime_version() -> str:
     return VERSION_FILE.read_text(encoding="utf-8").strip()
 
 
+def git_info_exclude(repo: Path) -> Path | None:
+    result = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--git-path", "info/exclude"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    path = Path(result.stdout.strip())
+    return path if path.is_absolute() else repo / path
+
+
+def configure_state_visibility(repo: Path, state_mode: str) -> None:
+    if state_mode not in STATE_MODES:
+        raise RalphError(f"Unsupported state mode: {state_mode}")
+    exclude = git_info_exclude(repo)
+    if exclude is None:
+        if state_mode == "tracked":
+            raise RalphError("Tracked Ralph state requires the orchestration root to be a Git repository")
+        return
+    tracked_state = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", ".ralph"],
+        check=False,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if state_mode == "local" and tracked_state:
+        raise RalphError(
+            "Cannot switch to local state while .ralph files are tracked; "
+            "remove them from the Git index intentionally, then rerun upgrade"
+        )
+    begin = "# BEGIN ralph-loop local state"
+    end = "# END ralph-loop local state"
+    text = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    output: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if line == begin:
+            inside = True
+            continue
+        if line == end:
+            inside = False
+            continue
+        if not inside:
+            output.append(line)
+    while output and not output[-1]:
+        output.pop()
+    if output:
+        output.append("")
+    pattern = "/.ralph/" if state_mode == "local" else "/.ralph/logs/"
+    output.extend((begin, pattern, end))
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.write_text("\n".join(output) + "\n", encoding="utf-8")
+
+
+def infer_state_mode(repo: Path) -> str:
+    tracked = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", "--error-unmatch", ".ralph/config.env"],
+        check=False,
+        capture_output=True,
+    )
+    if tracked.returncode == 0:
+        return "tracked"
+    ignored = subprocess.run(
+        ["git", "-C", str(repo), "check-ignore", "--no-index", "-q", ".ralph/config.env"],
+        check=False,
+    )
+    return "local" if ignored.returncode == 0 else ""
+
+
 def runtime_sources(mode: str) -> dict[str, Path]:
     if mode not in MODES:
         raise RalphError(f"Unsupported mode: {mode}")
@@ -397,6 +493,7 @@ def render_config(arguments: argparse.Namespace) -> str:
                 else ("owned-by-amp-mode" if arguments.agent == "amp" else "custom-command")
             ),
             "RALPH_AGENT_COMMAND": shell_value(arguments.agent_command or ""),
+            "RALPH_STATE_MODE": arguments.state_mode,
             "MAX_SPRINT_ITERATIONS": str(arguments.max_sprint_iterations),
             "MAX_CHUNK_ITERATIONS": str(arguments.max_chunk_iterations),
             "RALPH_CHUNK_VALIDATION_COMMAND": shell_value(
@@ -493,6 +590,7 @@ def install(arguments: argparse.Namespace) -> Path:
         )
     )
 
+    configure_state_visibility(repo, arguments.state_mode)
     target.mkdir(parents=True, exist_ok=True)
     if config.is_symlink():
         raise RalphError(f"Refusing symlinked runtime configuration: {config}")
@@ -505,6 +603,7 @@ def install(arguments: argparse.Namespace) -> Path:
             "schema_version": "1.0",
             "runtime_version": runtime_version(),
             "mode": arguments.mode,
+            "state_mode": arguments.state_mode,
             "repositories": arguments.repos if arguments.mode == "multi-repo" else [],
             "managed_files": checksums,
             "previous_runtime_version": None,
@@ -616,6 +715,17 @@ def upgrade(arguments: argparse.Namespace) -> Path:
         if arguments.max_chunk_iterations is not None
         else config.get("MAX_CHUNK_ITERATIONS")
     )
+    state_mode = (
+        arguments.state_mode
+        or config.get("RALPH_STATE_MODE", "")
+        or metadata.get("state_mode", "")
+        or infer_state_mode(repo)
+    )
+    if state_mode not in STATE_MODES:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            state_mode = prompt_state_mode()
+        else:
+            raise RalphError("Missing operator choice for upgrade: --state-mode")
     agent, model, reasoning_effort, max_sprint_iterations, max_chunk_iterations = (
         resolve_upgrade_operator_choices(
             agent,
@@ -674,7 +784,12 @@ def upgrade(arguments: argparse.Namespace) -> Path:
     migrated = update_config(
         remove_config_keys(
             config_path.read_text(encoding="utf-8"),
-            {"RALPH_UNATTENDED_APPROVED", "MAX_ITERATIONS"},
+            {
+                "RALPH_UNATTENDED_APPROVED",
+                "RALPH_INTERACTIVE",
+                "RALPH_INTERACTIVE_TIMEOUT_SEC",
+                "MAX_ITERATIONS",
+            },
         ),
         {
             "RALPH_MODE": mode,
@@ -687,12 +802,14 @@ def upgrade(arguments: argparse.Namespace) -> Path:
             ),
             "MAX_SPRINT_ITERATIONS": str(max_sprint_iterations),
             "MAX_CHUNK_ITERATIONS": str(max_chunk_iterations),
+            "RALPH_STATE_MODE": state_mode,
             "RALPH_CHUNK_VALIDATION_ENABLED": chunk_enabled,
             "RALPH_SPRINT_VALIDATION_ENABLED": sprint_enabled,
             "RALPH_CHUNK_VALIDATION_COMMAND": shell_value(chunk_command),
             "RALPH_SPRINT_VALIDATION_COMMAND": shell_value(sprint_command),
         },
     )
+    configure_state_visibility(repo, state_mode)
     checksums = copy_runtime(target, mode)
     temporary_config = config_path.with_name(".config.env.tmp")
     temporary_config.write_text(migrated, encoding="utf-8")
@@ -703,6 +820,7 @@ def upgrade(arguments: argparse.Namespace) -> Path:
             "schema_version": "1.0",
             "runtime_version": runtime_version(),
             "mode": mode,
+            "state_mode": state_mode,
             "repositories": repositories,
             "managed_files": checksums,
             "previous_runtime_version": metadata.get("runtime_version"),
@@ -1004,6 +1122,45 @@ def validate(repo: Path) -> dict[str, Any]:
                 "detail": raw_budget if valid_budget else "must be a positive integer",
             }
         )
+    state_mode = config.get("RALPH_STATE_MODE", "")
+    if state_mode not in STATE_MODES:
+        findings.append(
+            {
+                "status": "fail",
+                "check": "state-mode",
+                "detail": "RALPH_STATE_MODE must be tracked or local",
+            }
+        )
+    else:
+        git_root = git_info_exclude(repo.resolve()) is not None
+        tracked_state = subprocess.run(
+            ["git", "-C", str(repo.resolve()), "ls-files", ".ralph"],
+            check=False,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        ignored = subprocess.run(
+            ["git", "-C", str(repo.resolve()), "check-ignore", "--no-index", "-q", ".ralph/config.env"],
+            check=False,
+        ).returncode == 0
+        matches = (
+            state_mode == "local"
+            and not tracked_state
+            and (ignored or not git_root)
+        ) or (
+            state_mode == "tracked" and not ignored
+        )
+        findings.append(
+            {
+                "status": "pass" if matches else "fail",
+                "check": "state-mode",
+                "detail": (
+                    f"{state_mode}; no parent Git repository"
+                    if not git_root
+                    else f"{state_mode}; .ralph is {'ignored' if ignored else 'visible to Git'}"
+                ),
+            }
+        )
     if config.get("RALPH_CHUNK_VALIDATION_ENABLED", "true") == "true" and not config.get(
         "RALPH_CHUNK_VALIDATION_COMMAND"
     ):
@@ -1093,6 +1250,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--agent", choices=sorted(AGENTS))
     init_parser.add_argument("--model")
     init_parser.add_argument("--reasoning-effort")
+    init_parser.add_argument("--state-mode", choices=sorted(STATE_MODES))
     init_parser.add_argument(
         "--agent-command",
         help="Trusted custom shell command; receives RALPH_PROMPT_FILE and RALPH_PROJECT_ROOT.",
@@ -1119,6 +1277,7 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade_parser.add_argument("--agent", choices=sorted(AGENTS))
     upgrade_parser.add_argument("--model")
     upgrade_parser.add_argument("--reasoning-effort")
+    upgrade_parser.add_argument("--state-mode", choices=sorted(STATE_MODES))
     upgrade_parser.add_argument("--max-sprint-iterations", type=int)
     upgrade_parser.add_argument("--max-chunk-iterations", type=int)
     upgrade_parser.add_argument("--chunk-validation-command")
@@ -1135,6 +1294,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status_parser.add_argument("--repo", type=Path, default=Path.cwd())
     status_parser.add_argument("--sprint")
+    advance_parser = subparsers.add_parser(
+        "advance", help="Safely select the next prepared sprint."
+    )
+    advance_parser.add_argument("--repo", type=Path, default=Path.cwd())
     return parser
 
 
@@ -1151,6 +1314,7 @@ def main() -> int:
                 f"Harness={config.get('RALPH_AGENT') or 'unset'} "
                 f"model={config.get('RALPH_AGENT_MODEL') or 'custom-command'} "
                 f"reasoning={config.get('RALPH_AGENT_REASONING') or 'unset'} "
+                f"state={config.get('RALPH_STATE_MODE') or 'unset'} "
                 f"sprint-turns={config.get('MAX_SPRINT_ITERATIONS') or 'unset'} "
                 f"chunk-turns={config.get('MAX_CHUNK_ITERATIONS') or 'unset'}"
             )
@@ -1164,6 +1328,10 @@ def main() -> int:
             print(f"Upgraded Ralph runtime to {runtime_version()}: {target}")
             print("Operator configuration and sprint state were preserved.")
             return 0
+        if arguments.command == "advance":
+            selected = next_sprint(arguments.repo.resolve() / ".ralph", apply=True)
+            print(f"Selected next sprint: {selected}")
+            return 0
         status = arguments.repo.resolve() / ".ralph" / "status.sh"
         if not status.is_file():
             raise RalphError(f"Runtime not found: {status}")
@@ -1173,7 +1341,10 @@ def main() -> int:
         return subprocess.run(
             command, cwd=arguments.repo.resolve(), check=False
         ).returncode
-    except (OSError, RalphError) as error:
+    except NoNextSprint as error:
+        print(str(error), file=sys.stderr)
+        return 3
+    except (OSError, RalphError, AdvanceError) as error:
         print(str(error), file=sys.stderr)
         return 1
 
