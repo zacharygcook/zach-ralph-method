@@ -54,7 +54,7 @@ jobs:
       - name: Open synchronization pull request
         working-directory: collection
         run: |
-          if git diff --quiet -- skills/ralph-loop skills/ralph-sprint skills/ralph-status skills/ralph-review skills/ralph-workflows flagship-skills.lock.json inventory/skills.json; then
+          if git diff --quiet -- skills/ralph-loop skills/ralph-sprint skills/ralph-status skills/ralph-review flagship-skills.lock.json inventory/skills.json; then
             echo "Collection is already current."
             exit 0
           fi
@@ -63,7 +63,7 @@ jobs:
           git config user.name "flagship-skill-sync"
           git config user.email "actions@users.noreply.github.com"
           git checkout -b "$branch"
-          git add skills/ralph-loop skills/ralph-sprint skills/ralph-status skills/ralph-review skills/ralph-workflows flagship-skills.lock.json inventory/skills.json
+          git add skills/ralph-loop skills/ralph-sprint skills/ralph-status skills/ralph-review flagship-skills.lock.json inventory/skills.json
           git commit -m "Sync Ralph skill suite from canonical ${short_sha}"
           git push origin "$branch"
           gh pr create --repo zacharygcook/agent-skills --base master --head "$branch" --title "Sync Ralph skill suite ${short_sha}" --body "Automated deterministic export of \`ralph-loop\`, \`ralph-sprint\`, \`ralph-status\`, and \`ralph-review\` from the canonical repository at \`${GITHUB_SHA}\`. This also retires the generated \`ralph-workflows\` package. Collection CI verifies every locked package byte-for-byte."
