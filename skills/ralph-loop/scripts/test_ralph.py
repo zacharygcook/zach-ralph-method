@@ -168,7 +168,10 @@ class RalphRuntimeTest(unittest.TestCase):
             repo = Path(directory) / "repo"
             repo.mkdir()
             target = repo / ".agents" / "skills" / "ralph-loop"
-            shutil.copytree(MODULE_PATH.parents[1] / "skills" / "ralph-loop", target)
+            package_root = MODULE_PATH.parents[1]
+            if not (package_root / "SKILL.md").exists():
+                package_root = package_root / "skills" / "ralph-loop"
+            shutil.copytree(package_root, target)
             shutil.copy2(target / "justfile", repo / "justfile")
             listed = run(str(just), "--list", cwd=repo)
             self.assertEqual(listed.returncode, 0, listed.stderr)
