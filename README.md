@@ -4,28 +4,6 @@ A hardened, observable autonomous coding loop for one repository or a coordinate
 
 Ralph gives a coding agent a bounded chunk of work, lets it implement and verify that chunk in a fresh context, records durable handoff state, and repeats. The runtime makes autonomy inspectable: it requires an explicit harness and model, enforces sprint and per-chunk turn budgets, fingerprints managed files, validates real state changes before accepting completion, and leaves interrupted post-sprint work resumable.
 
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#DCE8EC', 'primaryTextColor': '#18242B', 'primaryBorderColor': '#3D5B68', 'lineColor': '#5C707A', 'secondaryColor': '#E5EEE4', 'tertiaryColor': '#EDF1F2', 'edgeLabelBackground': '#F7F9F9', 'fontFamily': 'system-ui'}}}%%
-flowchart TD
-    spec["SPEC"] --> prepare["Prepare one sprint"]
-    prepare --> review["Human review"]
-    review --> chunk["Run next chunk<br/>in a fresh context"]
-    chunk --> evidence{"Validation +<br/>commit evidence"}
-    evidence -->|pass| state["Persist state"]
-    state --> more{"More chunks?"}
-    more -->|yes| chunk
-    more -->|no| hooks["Review → docs → final validation"]
-    evidence -->|fail| repair["Repair handoff"]
-    repair --> chunk
-
-    classDef phase fill:#DCE8EC,stroke:#3D5B68,color:#18242B,stroke-width:1.5px;
-    classDef gate fill:#E5EEE4,stroke:#536D55,color:#18242B,stroke-width:1.5px;
-    classDef outcome fill:#EDF1F2,stroke:#5C707A,color:#18242B,stroke-width:1.5px;
-    class spec,prepare,review,chunk phase;
-    class evidence,more gate;
-    class state,hooks,repair outcome;
-```
-
 ## Why Ralph
 
 - **Fresh context, durable memory.** Each iteration starts a new agent process and reads `SCRATCHPAD.md`, plans, specs, and chunk state from disk.
@@ -63,6 +41,30 @@ The setup suggests strong models for the selected harness, asks for reasoning ef
 turn-budget ranges, collects fast chunk and comprehensive sprint validation, and asks whether Ralph's
 durable state should be tracked in Git or remain local. It never hides an operator choice behind a
 default.
+
+## The Ralph loop
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#DCE8EC', 'primaryTextColor': '#18242B', 'primaryBorderColor': '#3D5B68', 'lineColor': '#5C707A', 'secondaryColor': '#E5EEE4', 'tertiaryColor': '#EDF1F2', 'edgeLabelBackground': '#F7F9F9', 'fontFamily': 'system-ui'}}}%%
+flowchart TD
+    spec["SPEC"] --> prepare["Prepare one sprint"]
+    prepare --> review["Human review"]
+    review --> chunk["Run next chunk<br/>in a fresh context"]
+    chunk --> evidence{"Validation +<br/>commit evidence"}
+    evidence -->|pass| state["Persist state"]
+    state --> more{"More chunks?"}
+    more -->|yes| chunk
+    more -->|no| hooks["Review → docs → final validation"]
+    evidence -->|fail| repair["Repair handoff"]
+    repair --> chunk
+
+    classDef phase fill:#DCE8EC,stroke:#3D5B68,color:#18242B,stroke-width:1.5px;
+    classDef gate fill:#E5EEE4,stroke:#536D55,color:#18242B,stroke-width:1.5px;
+    classDef outcome fill:#EDF1F2,stroke:#5C707A,color:#18242B,stroke-width:1.5px;
+    class spec,prepare,review,chunk phase;
+    class evidence,more gate;
+    class state,hooks,repair outcome;
+```
 
 ### Everyday commands
 
