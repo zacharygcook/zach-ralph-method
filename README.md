@@ -1,5 +1,9 @@
 # The Ralph Method
 
+[![CI](https://github.com/zacharygcook/zach-ralph-method/actions/workflows/validate.yml/badge.svg)](https://github.com/zacharygcook/zach-ralph-method/actions/workflows/validate.yml)
+[![Install with npx](https://img.shields.io/badge/install%20with-npx-334155?logo=npm&logoColor=white)](#install-in-30-seconds)
+[![License: MIT](https://img.shields.io/badge/License-MIT-111111.svg)](LICENSE)
+
 A hardened, observable autonomous coding loop for one repository or a coordinated group of repositories.
 
 Ralph gives a coding agent a bounded chunk of work, lets it implement and verify that chunk in a fresh context, records durable handoff state, and repeats. The runtime makes autonomy inspectable: it requires an explicit harness and model, enforces sprint and per-chunk turn budgets, fingerprints managed files, validates real state changes before accepting completion, and leaves interrupted post-sprint work resumable.
