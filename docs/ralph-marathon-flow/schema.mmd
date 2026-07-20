@@ -9,7 +9,11 @@ flowchart LR
 
     classDef phase fill:#DCE8EC,stroke:#3D5B68,color:#18242B,stroke-width:1.5px;
     classDef gate fill:#E5EEE4,stroke:#536D55,color:#18242B,stroke-width:1.5px;
+    classDef checkpoint fill:#E5EEE4,stroke:#0F766E,color:#18242B,stroke-width:3px;
     classDef outcome fill:#EDF1F2,stroke:#5C707A,color:#18242B,stroke-width:1.5px;
+    classDef success fill:#0F766E,stroke:#0F766E,color:#FFFFFF,stroke-width:3px;
     class marathon,sprint phase;
-    class complete,next gate;
-    class done,pause outcome;
+    class complete gate;
+    class next checkpoint;
+    class done success;
+    class pause outcome;

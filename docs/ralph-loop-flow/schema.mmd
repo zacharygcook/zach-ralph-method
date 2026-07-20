@@ -11,7 +11,11 @@ flowchart LR
 
     classDef phase fill:#DCE8EC,stroke:#3D5B68,color:#18242B,stroke-width:1.5px;
     classDef gate fill:#E5EEE4,stroke:#536D55,color:#18242B,stroke-width:1.5px;
+    classDef checkpoint fill:#E5EEE4,stroke:#0F766E,color:#18242B,stroke-width:3px;
     classDef outcome fill:#EDF1F2,stroke:#5C707A,color:#18242B,stroke-width:1.5px;
+    classDef success fill:#0F766E,stroke:#0F766E,color:#FFFFFF,stroke-width:3px;
     class spec,prepare,chunk phase;
-    class verify,more gate;
-    class hooks,repair outcome;
+    class verify gate;
+    class more checkpoint;
+    class hooks success;
+    class repair outcome;
