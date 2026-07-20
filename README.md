@@ -50,7 +50,7 @@ default.
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#DCE8EC', 'primaryTextColor': '#18242B', 'primaryBorderColor': '#3D5B68', 'lineColor': '#5C707A', 'secondaryColor': '#E5EEE4', 'tertiaryColor': '#EDF1F2', 'edgeLabelBackground': '#F7F9F9', 'fontFamily': 'system-ui'}}}%%
-flowchart TD
+flowchart LR
     spec["SPEC"] --> prepare["Prepare one sprint"]
     prepare --> review["Human review"]
     review --> chunk["Run next chunk<br/>in a fresh context"]
