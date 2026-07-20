@@ -4,17 +4,29 @@ A hardened, observable autonomous coding loop for one repository or a coordinate
 
 Ralph gives a coding agent a bounded chunk of work, lets it implement and verify that chunk in a fresh context, records durable handoff state, and repeats. The runtime makes autonomy inspectable: it requires an explicit harness and model, enforces sprint and per-chunk turn budgets, fingerprints managed files, validates real state changes before accepting completion, and leaves interrupted post-sprint work resumable.
 
-```text
-SPEC → PLAN → CHUNKS → IMPLEMENT → VERIFY → COMMIT
-                         ↑                    │
-                         └── fresh context ───┘
-                                  │
-                           all chunks pass
-                                  ↓
-                        REVIEW → DOCS → TESTS
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#DCE8EC', 'primaryTextColor': '#18242B', 'primaryBorderColor': '#3D5B68', 'lineColor': '#5C707A', 'secondaryColor': '#E5EEE4', 'tertiaryColor': '#EDF1F2', 'edgeLabelBackground': '#F7F9F9', 'fontFamily': 'system-ui'}}}%%
+flowchart TD
+    spec["SPEC"] --> prepare["Prepare one sprint"]
+    prepare --> review["Human review"]
+    review --> chunk["Run next chunk<br/>in a fresh context"]
+    chunk --> evidence{"Validation +<br/>commit evidence"}
+    evidence -->|pass| state["Persist state"]
+    state --> more{"More chunks?"}
+    more -->|yes| chunk
+    more -->|no| hooks["Review → docs → final validation"]
+    evidence -->|fail| repair["Repair handoff"]
+    repair --> chunk
+
+    classDef phase fill:#DCE8EC,stroke:#3D5B68,color:#18242B,stroke-width:1.5px;
+    classDef gate fill:#E5EEE4,stroke:#536D55,color:#18242B,stroke-width:1.5px;
+    classDef outcome fill:#EDF1F2,stroke:#5C707A,color:#18242B,stroke-width:1.5px;
+    class spec,prepare,review,chunk phase;
+    class evidence,more gate;
+    class state,hooks,repair outcome;
 ```
 
-## Why this implementation
+## Why Ralph
 
 - **Fresh context, durable memory.** Each iteration starts a new agent process and reads `SCRATCHPAD.md`, plans, specs, and chunk state from disk.
 - **Evidence-backed completion.** A completion marker counts only when the number of passing chunks increases.
@@ -88,7 +100,7 @@ Before the first sprint, have:
 - A Git repository with a known baseline and no unexplained concurrent changes.
 - Node.js/npm with `npx`, plus `just`, for installing and operating the skill.
 - Bash, Git, `jq`, and Python 3 for the generated runtime.
-- A supported coding-agent CLI: Codex, Claude Code, Droid, Grok Build, Amp, OpenCode, or a configured custom command.
+- A supported coding-agent CLI: Codex, Claude Code, Droid, Grok Build, Amp, or OpenCode.
 - A durable `SPEC.md` (or equivalent source of truth) describing the desired system and boundaries.
 - One fast per-chunk validation command and one comprehensive final validation command. Existing test,
   lint, typecheck, build, and E2E scripts are ideal inputs.
@@ -106,18 +118,13 @@ the skill names are the same.
 Ask your coding agent:
 
 ```text
-Use $ralph-loop to preflight this repository for a Ralph loop. Read SPEC.md and the repository's
-agent instructions. Identify the fast chunk-validation command and comprehensive sprint-validation
-command. Confirm the harness, exact model, reasoning effort, maximum sprint turns, and maximum turns
-per chunk with me.
-Initialize or upgrade .ralph, break the spec into dependency-ordered sprints, create only the first
-sprint, set CURRENT_SPRINT, validate the complete setup, and stop before running. Explain any blockers
-and summarize exactly what I should review.
+Use $ralph-loop to set up a Ralph loop for this repository from SPEC.md. Preflight the repository,
+confirm the required runtime choices with me, prepare and validate the first sprint, then stop for my
+review before starting the loop.
 ```
 
-You do **not** manually create `.ralph/` or its sprint files. The deterministic installer creates the
-runtime directories; the skill creates `.ralph/sprints/<number-name>/`, curates the relevant spec,
-builds `chunks.json`, adds persistent `SCRATCHPAD.md` memory, and selects the active sprint.
+You do **not** manually create `.ralph/` or sprint files. The installer creates the runtime; the skill
+prepares and selects the first sprint.
 
 ### 3. Review before arming
 
@@ -125,9 +132,7 @@ Inspect the proposed sprint, especially its goal, chunk order, artifacts, accept
 validation commands. To ask the skill for a readiness check:
 
 ```text
-Use $ralph-review to inspect the current Ralph sprint and tell me whether it is safe and complete
-enough to run. Confirm the configured harness, model, reasoning effort, sprint turn budget, and
-per-chunk turn budget.
+Use $ralph-review to assess the current sprint and tell me what I should fix or review before running it.
 Do not start the loop.
 ```
 
@@ -165,30 +170,21 @@ budget, or missing next sprint stops it. Use `just resume` after interruption.
 
 ## Supported agent harnesses
 
-The generated runtime supports Claude Code, Codex, Droid, Grok Build, Amp, OpenCode, and a trusted custom
-command. Interactive setup offers a short researched model list—including GPT-5.5 and GPT-5.4 for
-Codex—while always accepting another exact value. Droid, Grok Build, and OpenCode suggestions use locally
-available models when their CLIs expose them.
+The generated runtime supports Claude Code, Codex, Droid, Grok Build, Amp, and OpenCode. Interactive setup
+offers a short researched model list—including GPT-5.5 and GPT-5.4 for Codex—while accepting another exact
+value. Droid, Grok Build, and OpenCode suggestions use locally available models when their CLIs expose them.
 
 | Harness | `RALPH_AGENT_MODEL` meaning |
 | --- | --- |
 | Claude Code, Codex, Droid, Grok Build | Exact value passed through `--model`. |
 | OpenCode | Provider/model value passed through `--model`. |
 | Amp | Amp mode passed through `--mode` (`deep`, `free`, `large`, `rush`, or `smart`). |
-| Custom command | Exported as `RALPH_AGENT_MODEL`; the command owns how to use it. |
 
 Reasoning is explicit too. Ralph maps it to Claude `--effort`, Codex
 `model_reasoning_effort`, Droid/Grok Build `--reasoning-effort`, or OpenCode `--variant`. Choosing `inherit` is
-an explicit decision to use that harness's configuration. Amp's selected mode owns its reasoning
-behavior; custom commands receive `RALPH_AGENT_REASONING`.
+an explicit decision to use that harness's configuration. Amp's selected mode owns its reasoning behavior.
 
-CLI flags evolve, so adapter argument construction is regression-tested and `RALPH_AGENT_COMMAND`
-provides an immediate escape hatch without changing the orchestrator.
-
-Custom commands receive:
-
-- `RALPH_PROMPT_FILE` — the prompt file for the current iteration or hook
-- `RALPH_PROJECT_ROOT` — the working directory the command should use
+CLI flags evolve, so adapter argument construction is regression-tested.
 
 ## Safety model
 
@@ -227,7 +223,7 @@ pre-commit hook for earlier feedback, but Ralph's independent gate remains autho
 Agents and scripts can bypass the interactive recipes by passing every decision explicitly:
 
 ```bash
-./.agents/skills/ralph-loop/scripts/ralph init --repo . --agent "your harness" --model "your model" --reasoning-effort "your reasoning" --state-mode "tracked or local" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
+./.agents/skills/ralph-loop/scripts/ralph init --repo . --agent "supported harness" --model "your model" --reasoning-effort "your reasoning" --state-mode "tracked or local" --max-sprint-iterations "your sprint budget" --max-chunk-iterations "your chunk budget" --chunk-validation-command "your fast check" --sprint-validation-command "your full check"
 ./.agents/skills/ralph-loop/scripts/ralph upgrade --repo .
 ./.agents/skills/ralph-loop/scripts/ralph validate --repo .
 ./.ralph/loop.sh --resume

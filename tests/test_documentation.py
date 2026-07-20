@@ -37,13 +37,10 @@ class DocumentationContractTest(unittest.TestCase):
         )[0]
         for prerequisite in ("Python 3", "jq", "SPEC.md", "validation command"):
             self.assertIn(prerequisite, quick_start)
-        self.assertIn("Use $ralph-loop to preflight", quick_start)
+        self.assertIn("Use $ralph-loop to set up a Ralph loop", quick_start)
         self.assertIn("You do **not** manually create `.ralph/`", quick_start)
-        self.assertIn("exact model", quick_start)
-        self.assertIn("reasoning effort", quick_start)
-        self.assertIn("GPT-5.5", readme)
-        self.assertIn("maximum sprint turns", quick_start)
-        self.assertIn("per-chunk turn budget", quick_start)
+        self.assertIn("required runtime choices", quick_start)
+        self.assertIn("review before starting the loop", quick_start)
         self.assertIn("just run", quick_start)
         self.assertIn("Which skill should I use?", quick_start)
         for name in ("$ralph-loop", "$ralph-sprint", "$ralph-status", "$ralph-review"):

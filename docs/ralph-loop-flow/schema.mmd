@@ -1,0 +1,19 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#DCE8EC', 'primaryTextColor': '#18242B', 'primaryBorderColor': '#3D5B68', 'lineColor': '#5C707A', 'secondaryColor': '#E5EEE4', 'tertiaryColor': '#EDF1F2', 'edgeLabelBackground': '#F7F9F9', 'fontFamily': 'system-ui'}}}%%
+flowchart TD
+    spec["SPEC"] --> prepare["Prepare one sprint"]
+    prepare --> review["Human review"]
+    review --> chunk["Run next chunk<br/>in a fresh context"]
+    chunk --> evidence{"Validation +<br/>commit evidence"}
+    evidence -->|pass| state["Persist state"]
+    state --> more{"More chunks?"}
+    more -->|yes| chunk
+    more -->|no| hooks["Review → docs → final validation"]
+    evidence -->|fail| repair["Repair handoff"]
+    repair --> chunk
+
+    classDef phase fill:#DCE8EC,stroke:#3D5B68,color:#18242B,stroke-width:1.5px;
+    classDef gate fill:#E5EEE4,stroke:#536D55,color:#18242B,stroke-width:1.5px;
+    classDef outcome fill:#EDF1F2,stroke:#5C707A,color:#18242B,stroke-width:1.5px;
+    class spec,prepare,review,chunk phase;
+    class evidence,more gate;
+    class state,hooks,repair outcome;
