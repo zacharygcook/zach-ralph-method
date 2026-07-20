@@ -51,23 +51,46 @@ default.
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#DCE8EC', 'primaryTextColor': '#18242B', 'primaryBorderColor': '#3D5B68', 'lineColor': '#5C707A', 'secondaryColor': '#E5EEE4', 'tertiaryColor': '#EDF1F2', 'edgeLabelBackground': '#F7F9F9', 'fontFamily': 'system-ui'}}}%%
 flowchart LR
-    spec["SPEC"] --> prepare["Prepare one sprint"]
-    prepare --> review["Human review"]
-    review --> chunk["Run next chunk<br/>in a fresh context"]
-    chunk --> evidence{"Validation +<br/>commit evidence"}
-    evidence -->|pass| state["Persist state"]
-    state --> more{"More chunks?"}
+    spec["SPEC.md"] --> prepare["Prep sprint"]
+    prepare --> chunk["Run next chunk"]
+    chunk --> verify{"Verify chunk"}
+    verify -->|pass| more{"More chunks?"}
     more -->|yes| chunk
     more -->|no| hooks["Review → docs → final validation"]
-    evidence -->|fail| repair["Repair handoff"]
+    verify -->|fail| repair["Repair handoff"]
     repair --> chunk
 
     classDef phase fill:#DCE8EC,stroke:#3D5B68,color:#18242B,stroke-width:1.5px;
     classDef gate fill:#E5EEE4,stroke:#536D55,color:#18242B,stroke-width:1.5px;
     classDef outcome fill:#EDF1F2,stroke:#5C707A,color:#18242B,stroke-width:1.5px;
-    class spec,prepare,review,chunk phase;
-    class evidence,more gate;
-    class state,hooks,repair outcome;
+    class spec,prepare,chunk phase;
+    class verify,more gate;
+    class hooks,repair outcome;
+```
+
+`just run` completes the current prepared sprint and pauses. `just marathon` runs that same loop, then
+advances only to the next sequential sprint that is already prepared—it never plans new work. It ends
+cleanly when no next sprint is ready, and pauses with durable state on a failure, blocker, or exhausted
+budget.
+
+### Marathon mode
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#DCE8EC', 'primaryTextColor': '#18242B', 'primaryBorderColor': '#3D5B68', 'lineColor': '#5C707A', 'secondaryColor': '#E5EEE4', 'tertiaryColor': '#EDF1F2', 'edgeLabelBackground': '#F7F9F9', 'fontFamily': 'system-ui'}}}%%
+flowchart LR
+    marathon["just marathon"] --> sprint["Run current<br/>prepared sprint"]
+    sprint --> complete{"Sprint complete?"}
+    complete -->|yes| next{"Next sprint<br/>prepared?"}
+    next -->|yes, advance| sprint
+    next -->|no| done["Marathon complete"]
+    complete -->|no| pause["Pause: failure, blocker,<br/>or exhausted budget"]
+
+    classDef phase fill:#DCE8EC,stroke:#3D5B68,color:#18242B,stroke-width:1.5px;
+    classDef gate fill:#E5EEE4,stroke:#536D55,color:#18242B,stroke-width:1.5px;
+    classDef outcome fill:#EDF1F2,stroke:#5C707A,color:#18242B,stroke-width:1.5px;
+    class marathon,sprint phase;
+    class complete,next gate;
+    class done,pause outcome;
 ```
 
 ### Everyday commands
